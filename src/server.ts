@@ -1,0 +1,174 @@
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { serve } from '@hono/node-server';
+import { Hono } from 'hono';
+import { invocationLog } from '@substrat-run/vertical-host';
+import type { Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import { platformActorId } from '@substrat-run/contracts';
+import { ulid, type ScopeStub } from '@substrat-run/kernel';
+import { devMailOutbox } from '@substrat-run/adapter-sqlite';
+import Database from 'better-sqlite3';
+import { devLogin, devMemberInvites } from '@substrat-run/dev-issuer';
+import { buildSalesHost, linkDevPersonas, seedSales, type SalesWorld } from './seed.js';
+import { DEV_PROVIDER } from './personas.js';
+import { mountApi } from './routes.js';
+import { NoTurnWaiting, runAssistantTurn } from './assistant-host.js';
+import { resolveAssistantModel } from './assistant-model.js';
+import { assistantModule } from '@substrat-run/engine-assistant';
+import { substratError } from '@substrat-run/contracts';
+
+// ============================================================================
+// The DEV entrypoint. It owns exactly five things — a SQLite host on disk, the
+// relying-party login, where queued mail goes, where member invites are kept, and the port — and
+// then mounts `routes.ts`, the same
+// route table `worker.ts` mounts. There is no business logic here and no route
+// here either: a route added to this file would exist in dev and 404 in
+// production, which is the one failure this split exists to prevent.
+//
+// ── AUTH ────────────────────────────────────────────────────────────────────
+// An ordinary OpenID Connect round-trip, against whatever `OIDC_ISSUER` names.
+// `pnpm dev` starts `@substrat-run/dev-issuer` on :8879 — a real provider whose
+// only shortcut is that you pick a name instead of typing a password — so the
+// login you exercise locally is the one your users will run, and pointing this
+// at Auth0, Keycloak or your own issuer is a change of configuration, not code.
+//
+// There is deliberately NO dev header here. A header naming the caller is an
+// impersonation bypass; kept for convenience it becomes a second auth path that
+// no deployment runs, and one environment variable away from being live.
+// Impersonation for scripts lives at the issuer instead:
+//   curl -XPOST localhost:8879/dev/token -d '{"sub":"dev|markus"}'
+//
+// ── THE VITE PROXY, IF YOU ADD ONE ──────────────────────────────────────────
+// Do not set `changeOrigin` on a proxy in front of this server: the OIDC
+// `redirect_uri` is derived from the forwarded Host header, and rewriting it
+// sends the login callback to the API port instead of back to your app.
+// ============================================================================
+
+const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', '.data');
+mkdirSync(dataDir, { recursive: true });
+
+const host = buildSalesHost(dataDir);
+const world: SalesWorld = await seedSales(host, dataDir);
+await linkDevPersonas(host, world);
+
+// The local platform actor (a stub locally): directory reads are stamped with it.
+const staffActor = platformActorId.parse(ulid());
+
+// ── MAIL ────────────────────────────────────────────────────────────────────
+// An operation queues mail with `requestEmail`, and hosted, the platform sends it once the
+// operation commits. Locally there is no platform, so each mail is written to `.data/outbox/`
+// (or `MAIL_OUTBOX_DIR`) as an `.eml` file, and one line names it: open it to read the
+// invitation a person was sent. `drain()` catches what an earlier run left queued; `kick` (in
+// `stub` below) writes a mail as soon as the call that queued it commits.
+const outbox = devMailOutbox(host, { dataDir, actor: staffActor });
+await outbox.drain();
+
+// ── MEMBER INVITES ──────────────────────────────────────────────────────────
+// A person a member invite names gets in by the address the issuer verified, as they do hosted:
+// the first time they sign in, `login` finds the invite and links them to the invited account,
+// with its role. The invites are kept in `.data/members.sqlite`. A vertical whose people invite
+// each other mounts the routes below, naming the same operations worker.ts names in `workerDoor`.
+// The dev issuer signs in only the people in src/personas.ts. If your people invite each other, add
+// one persona and leave it out of `homes` in seed.ts, so nothing links it; invite it at the `email`
+// its persona carries, and it gets in as it would hosted. This shop has none, as it invites nobody.
+const members = devMemberInvites({
+  db: new Database(join(dataDir, 'members.sqlite')),
+  host,
+  actor: staffActor,
+  provider: DEV_PROVIDER,
+});
+
+/**
+ * The relying party — login, callback, logout, plus `sub` → principal through the
+ * identity directory. The persona's tenant and scope come out of the link the seed
+ * wrote, which is why signing in as Rutger lands in the OTHER shop and every one of
+ * this shop's rows stays out of reach.
+ */
+// Both ports are bound in THIS file so they move together: `substrat.devServers` names
+// it for the API and for the issuer alike, and `ISSUER_PORT=… PORT=… pnpm dev` shifts the
+// pair without either end losing track of the other.
+//
+// The issuer default is 8879 because that is `@substrat-run/dev-issuer`'s OWN default —
+// the `issuer` script passes no `--port`, so this number and the one the issuer actually
+// binds have to be the same or the login round-trip points at nothing. Change one and you
+// must change the other; `ISSUER_PORT=…` moves both at once, which is the supported way.
+const ISSUER_PORT = Number(process.env.ISSUER_PORT ?? 8879);
+const login = devLogin({
+  directory: host.admin,
+  actor: staffActor,
+  provider: DEV_PROVIDER,
+  issuer: process.env.OIDC_ISSUER ?? `http://localhost:${ISSUER_PORT}`,
+  admit: members.admit,
+});
+
+const app = new Hono();
+// The request's stamp: an id on every response (`x-substrat-request-id`) and, under
+// `substrat dev`, the HTTP half of its trace. FIRST, so it wraps every route below. Bare on
+// purpose: no router fronts this server, so there is nothing to verify and no line to write.
+app.use('*', invocationLog());
+
+// Login, callback, logout. Accounts and passwords live at the issuer; this vertical
+// runs no credential store of its own.
+app.on(['GET', 'POST'], '/api/auth/*', (c) => login.handle(c.req.raw));
+
+/** Who is signed in, or 401 — the same question `worker.ts` answers. */
+app.get('/api/me', async (c) => {
+  const caller = await login.caller(c.req.raw.headers);
+  if (!caller) return c.json({ error: 'unauthorized' }, 401);
+  return c.json({ principal: caller.principal, display: caller.display });
+});
+
+async function stub(c: Context): Promise<ScopeStub> {
+  const caller = await login.caller(c.req.raw.headers);
+  if (!caller) throw new HTTPException(401, { message: 'unauthorized' });
+  return host.getScope(caller.principal, caller.tenantId, caller.scopeId, {
+    verifiedEmail: caller.verifiedEmail,
+    ...outbox.kick(caller),
+  });
+}
+
+// `POST /api/member-invites` and its withdrawal, for a vertical that invites its people:
+//
+//   members.mount(app, {
+//     login,
+//     scope: stub,
+//     invites: {
+//       roles: ['mechanic', 'front-desk'],
+//       send: (scope, i) => scope.invoke('shop/invite-member', { principal: i.principal, email: i.email, roleKey: i.roleKey }),
+//       cancel: (scope, i) => scope.invoke('shop/cancel-invite', { principal: i.principal }),
+//     },
+//   });
+//
+// This shop invites nobody: its people are added by staff.
+
+// Everything else — including `/api/invoke` and the shared error envelope.
+mountApi(app, stub, async (c, person, threadId) => {
+  const caller = await login.caller(c.req.raw.headers);
+  if (!caller) throw new HTTPException(401, { message: 'unauthorized' });
+  // The model is resolved per question, so setting ANTHROPIC_API_KEY takes effect without a restart of the page.
+  const choice = resolveAssistantModel(process.env);
+  try {
+    await runAssistantTurn({
+      threadId,
+      person,
+      // The assistant's own identity, holding `assistant:run` and nothing else: the only writer of its side.
+      system: await host.getSystemScope(assistantModule.manifest.id, caller.tenantId, caller.scopeId),
+      model: choice.model,
+      notConfigured: 'reason' in choice ? choice.reason : undefined,
+    });
+  } catch (e) {
+    if (e instanceof NoTurnWaiting) throw substratError('conflict', e.message);
+    throw e;
+  }
+});
+
+// 8891, not 8873. The `887x`/`527x` block is reserved for this monorepo's own demos
+// (CLAUDE.md, "Commands"), and 8873 is the shop demo's API — so a scaffolded project used
+// to refuse to boot beside the demo it was read from. A scaffold has no claim on that
+// block; `PORT=…` moves this one.
+const PORT = Number(process.env.PORT ?? 8891);
+serve({ fetch: app.fetch, port: PORT });
+console.log(`Sales OS API on http://localhost:${PORT} — data in ${dataDir}, mail in ${outbox.dir}`);
+console.log(`Sign in at http://localhost:${PORT}/api/auth/login — issuer: ${login.issuer}`);
