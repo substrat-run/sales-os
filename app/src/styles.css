@@ -91,3 +91,9 @@ h3 { margin: 1rem 0 .5rem; }
 .segmented button { border: 0; border-radius: 0; background: transparent; padding: .45rem .9rem; }
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button.on { background: var(--accent); color: var(--accent-text); }
+
+/* ---- Pipeline: <sub-kanban> fills this frame; each column scrolls on its own ---- */
+.kanban-frame { height: calc(100vh - 17rem); min-height: 26rem; }
+.kanban-frame sub-kanban { display: block; height: 100%; --sub-kanban-column-width: 15rem; }
+.modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgb(0 0 0 / .35); z-index: 50; }
+.modal .card { min-width: min(24rem, 92vw); }

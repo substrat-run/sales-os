@@ -1,17 +1,72 @@
-import { useState, type FormEvent } from 'react';
+import { useCallback, useState, type FormEvent } from 'react';
+import { Board, type KanbanMove } from '../elements';
 import { getAll, getWithEtag, post, stageLabel, useLoad, STAGES, type Company, type Opportunity } from '../api';
-import { Badge, CompanyLink, ErrorBox, Field, Loading, Who, fmtDate, money, useAction } from '../ui';
+import { ErrorBox, Field, Loading, fmtDate, money, useAction, useMemberNames } from '../ui';
 
 const FORWARD = STAGES.filter((s) => s !== 'lost');
+
+const COLUMNS = STAGES.map((s) => ({ key: s, label: stageLabel(s) }));
+const isOpen = (stage: string) => stage !== 'won' && stage !== 'lost';
 
 export function Pipeline() {
   const q = useLoad(async () => {
     const [opps, companies] = await Promise.all([getAll<Opportunity>('/opportunities', 10), getAll<Company>('/companies', 10)]);
     return { opps, companies, names: new Map(companies.map((c) => [c.id, c.name])) };
   }, []);
+  const members = useMemberNames();
   const [adding, setAdding] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [asking, setAsking] = useState<{ resolve: (reason: string) => void; reject: () => void } | null>(null);
+  const names = q.data?.names;
+  // Stable identities: the board starts over when these change.
+  const mount = useCallback((el: HTMLElement, o: Opportunity) => {
+    const draw = (o: Opportunity) => {
+      el.replaceChildren();
+      const line = (text: string, cls = '') => { const d = document.createElement('div'); d.textContent = text; if (cls) d.className = cls; el.append(d); return d; };
+      line(o.title).style.fontWeight = '600';
+      const a = document.createElement('a'); a.href = `#/companies/${o.company_id}`; a.textContent = names?.get(o.company_id) ?? 'company';
+      const c = document.createElement('div'); c.className = 'muted'; c.append(a); el.append(c);
+      line(money(o));
+      line(`${o.owner_id ? members.get(o.owner_id) ?? 'someone' : 'unassigned'} · target ${fmtDate(o.target_date)}`, 'muted');
+      if (!o.next_step && isOpen(o.stage)) line('no next step', 'badge warn');
+      else if (o.next_step) line(`Next: ${o.next_step}`);
+      if (o.lost_reason) line(`Lost: ${o.lost_reason}`, 'muted');
+    };
+    draw(o);
+    return { update: draw };
+  }, [names, members]);
+  const canDrag = useCallback((o: Opportunity) => isOpen(o.stage), []);
+  // One step forward, or lost from any open stage. A reorder inside a column is never refused by the board.
+  const canDrop = useCallback((o: Opportunity, from: string, to: string) => {
+    if (!isOpen(from)) return false;
+    if (to === 'lost') return true;
+    const i = FORWARD.indexOf(from as (typeof FORWARD)[number]);
+    return FORWARD[i + 1] === to;
+  }, []);
+  const move = useCallback(async (m: KanbanMove<Opportunity>) => {
+    setFailure(null);
+    if (m.from === m.to) return; // The order inside a column is not stored.
+    const o = m.card;
+    if (m.to === 'lost') {
+      const reason = await new Promise<string>((resolve, reject) => setAsking({ resolve, reject }));
+      await post(`/opportunities/${o.id}/move`, { opportunityId: o.id, stage: 'lost', lostReason: reason });
+    } else {
+      await post(`/opportunities/${o.id}/move`, { opportunityId: o.id, stage: m.to });
+    }
+    q.reload();
+  }, [q.reload]);
+  const keyOf = useCallback((o: Opportunity) => o.id, []);
+  const columnOf = useCallback((o: Opportunity) => o.stage, []);
+  const labelOf = useCallback((o: Opportunity) => o.title, []);
+  const onFailed = useCallback((e: unknown) => {
+    // A cancelled reason is not an error; the card just goes back.
+    if (e === undefined) return;
+    setFailure(e instanceof Error ? e.message : 'The move was refused.');
+  }, []);
   if (!q.data) return <Loading state={q} />;
-  const { opps, companies, names } = q.data;
+  const { opps, companies } = q.data;
+  const current = opps.find((o) => o.id === selected);
   return (
     <>
       <h1>Pipeline</h1>
@@ -19,19 +74,48 @@ export function Pipeline() {
         <button onClick={() => setAdding(!adding)}>{adding ? 'Cancel' : 'New opportunity'}</button>
       </div>
       {adding && <NewOpportunity companies={companies.filter((c) => !c.merged_into)} onDone={() => { setAdding(false); q.reload(); }} />}
-      <div className="board">
-        {STAGES.map((stage) => {
-          const cards = opps.filter((o) => o.stage === stage);
-          return (
-            <div className="column" key={stage}>
-              <h3>{stageLabel(stage)} <span className="muted">{cards.length}</span></h3>
-              {cards.map((o) => <Card key={o.id} o={o} name={names.get(o.company_id)} onDone={q.reload} />)}
-            </div>
-          );
-        })}
+      {failure && <div className="note error" role="alert">{failure}</div>}
+      <div className="kanban-frame">
+        <Board<Opportunity>
+          label="Pipeline" columns={COLUMNS} cards={opps} keyOf={keyOf} columnOf={columnOf} labelOf={labelOf}
+          mount={mount} canDrag={canDrag} canDrop={canDrop} move={move} onOpen={(o) => setSelected(o.id)} onFailed={onFailed}
+        />
       </div>
-      <p className="muted">A stage moves one step at a time. An opportunity can be marked lost from any open stage, with a reason.</p>
+      <p className="muted">Drag a card one stage forward, or onto Lost (it asks why). Tab to a card and press Space to move it with the keyboard. Click a card to edit it.</p>
+      {current && <Detail key={current.id} o={current} onClose={() => setSelected(null)} onDone={q.reload} />}
+      {asking && (
+        <LostReason onSubmit={(r) => { asking.resolve(r); setAsking(null); }} onCancel={() => { asking.reject(); setAsking(null); }} />
+      )}
     </>
+  );
+}
+
+function LostReason({ onSubmit, onCancel }: { onSubmit: (reason: string) => void; onCancel: () => void }) {
+  const [reason, setReason] = useState('');
+  return (
+    <div className="modal" role="dialog" aria-modal="true" aria-label="Why was it lost?">
+      <form className="card form" onSubmit={(e) => { e.preventDefault(); onSubmit(reason); }}>
+        <Field label="Why was it lost?"><input required autoFocus value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+        <div className="actions"><button className="primary">Mark lost</button><button type="button" onClick={onCancel}>Cancel</button></div>
+      </form>
+    </div>
+  );
+}
+
+function Detail({ o, onClose, onDone }: { o: Opportunity; onClose: () => void; onDone: () => void }) {
+  const act = useAction(onDone);
+  const idx = FORWARD.indexOf(o.stage as (typeof FORWARD)[number]);
+  const next = isOpen(o.stage) ? FORWARD[idx + 1] : undefined;
+  return (
+    <section className="card">
+      <h2>{o.title}</h2>
+      <ErrorBox error={act.error} />
+      <div className="actions">
+        {next && <button disabled={act.busy} onClick={() => act.run(() => post(`/opportunities/${o.id}/move`, { opportunityId: o.id, stage: next }))}>→ {stageLabel(next)}</button>}
+        <button onClick={onClose}>Close</button>
+      </div>
+      {isOpen(o.stage) ? <EditOpp o={o} onDone={() => { onDone(); }} /> : <p className="muted">{o.stage === 'won' ? 'Won' : 'Lost'}: closed opportunities are not edited.</p>}
+    </section>
   );
 }
 
@@ -65,39 +149,6 @@ function NewOpportunity({ companies, onDone }: { companies: Company[]; onDone: (
       <ErrorBox error={act.error} />
       <button className="primary" disabled={act.busy}>Open opportunity</button>
     </form>
-  );
-}
-
-function Card({ o, name, onDone }: { o: Opportunity; name: string | undefined; onDone: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [lost, setLost] = useState<string | null>(null);
-  const act = useAction(() => { setLost(null); onDone(); });
-  const idx = FORWARD.indexOf(o.stage as (typeof FORWARD)[number]);
-  const next = o.stage === 'won' || o.stage === 'lost' ? undefined : FORWARD[idx + 1];
-  return (
-    <article className="opp">
-      <strong>{o.title}</strong>
-      <div className="muted"><CompanyLink id={o.company_id} name={name} /></div>
-      <div>{money(o)}</div>
-      <div className="muted"><Who id={o.owner_id} /> · target {fmtDate(o.target_date)}</div>
-      <div>{o.next_step ? <>Next: {o.next_step}</> : <Badge kind="warn">no next step</Badge>}</div>
-      {o.lost_reason && <div className="muted">Lost: {o.lost_reason}</div>}
-      <ErrorBox error={act.error} />
-      {next && (
-        <div className="actions">
-          <button disabled={act.busy} onClick={() => act.run(() => post(`/opportunities/${o.id}/move`, { opportunityId: o.id, stage: next }))}>→ {stageLabel(next)}</button>
-          <button disabled={act.busy} onClick={() => setLost(lost === null ? '' : null)}>Lost…</button>
-          <button onClick={() => setOpen(!open)}>Edit</button>
-        </div>
-      )}
-      {lost !== null && (
-        <form className="inline" onSubmit={(e) => { e.preventDefault(); void act.run(() => post(`/opportunities/${o.id}/move`, { opportunityId: o.id, stage: 'lost', lostReason: lost })); }}>
-          <input required autoFocus placeholder="Why was it lost?" value={lost} onChange={(e) => setLost(e.target.value)} />
-          <button disabled={act.busy}>Mark lost</button>
-        </form>
-      )}
-      {open && <EditOpp o={o} onDone={() => { setOpen(false); onDone(); }} />}
-    </article>
   );
 }
 
