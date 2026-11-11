@@ -51,6 +51,10 @@
         "portEnv": "VITEST_UI_PORT",
         "portFrom": "vitest.ui.config.ts"
       }
+    ],
+    "entitlements": [
+      "sales-os",
+      "assistant"
     ]
   },
   "scripts": {

@@ -45,3 +45,28 @@ describe('/api/invoke — the one hand-written route (#2073)', () => {
     expect(got.input).toEqual({ q: 'x' });
   });
 });
+
+describe('/api/assistant/status: Ask is only offered where the host can run it', () => {
+  const stub = {} as unknown as ScopeStub;
+  const statusOf = async (runAssistant?: Parameters<typeof mountApi>[2]) => {
+    const app = new Hono();
+    mountApi(app, async () => stub, runAssistant);
+    const res = await app.request('/api/assistant/status');
+    return { status: res.status, body: await res.json() };
+  };
+
+  it('a host that cannot run the model loop (the deployed worker, today) says so', async () => {
+    expect(await statusOf()).toEqual({ status: 200, body: { available: false } });
+  });
+
+  it('a host that can (the dev server) says so', async () => {
+    expect(await statusOf(async () => undefined)).toEqual({ status: 200, body: { available: true } });
+  });
+
+  it('and the run route on a host that cannot answers with an unavailable problem, not a crash', async () => {
+    const app = new Hono();
+    mountApi(app, async () => stub);
+    const res = await app.request('/api/assistant/threads/abc/run', { method: 'POST' });
+    expect(res.status).toBe(503);
+  });
+});

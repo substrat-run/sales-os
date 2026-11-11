@@ -142,9 +142,12 @@ export function App() {
 function Shell({ me, route }: { me: Me; route: string[] }) {
   const members = useMembersLoader();
   const perms = useLoad(async () => new Set((await get<{ permissions: string[] }>('/my-permissions')).permissions), []);
+  // Whether this host can actually answer questions. The deployed worker cannot yet, so Ask is not offered there.
+  const assistantHost = useLoad(async () => (await get<{ available: boolean }>('/assistant/status')).available, []);
   const [section = 'today', id] = route;
   if (!perms.data) return <main className="center"><p className="muted">{perms.error ? perms.error.message : 'Loading…'}</p></main>;
   const can = perms.data;
+  const canAsk = can.has('assistant:use') && assistantHost.data === true;
   const visible = NAV.filter(([, , need]) => !need || can.has(need));
   return (
     <CanProvider value={can}>
@@ -161,7 +164,7 @@ function Shell({ me, route }: { me: Me; route: string[] }) {
             ))}
           </nav>
           <div className="side-foot">
-            {can.has('assistant:use') && (
+            {canAsk && (
               <button onClick={() => window.dispatchEvent(new CustomEvent(OPEN_PALETTE, { detail: { mode: 'ask' } }))}>Ask</button>
             )}
             <button className="search" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_PALETTE, { detail: { mode: 'go' } }))} aria-label="Search (Ctrl K)">
@@ -185,7 +188,7 @@ function Shell({ me, route }: { me: Me; route: string[] }) {
           {!NAV.some(([k]) => k === section) && section !== 'settings' && <p className="muted">Nothing here.</p>}
         </main>
       </div>
-      <CommandPalette screens={[...visible.map(([route, label]) => ({ route, label })), { route: 'settings', label: 'Settings' }]} canAsk={can.has('assistant:use')} />
+      <CommandPalette screens={[...visible.map(([route, label]) => ({ route, label })), { route: 'settings', label: 'Settings' }]} canAsk={canAsk} />
     </MembersProvider>
     </CanProvider>
   );

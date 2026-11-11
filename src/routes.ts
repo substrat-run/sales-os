@@ -86,6 +86,13 @@ export function mountApi(
     return externalJson(c, (await (await resolveStub(c)).invoke(op, externalInput(input))) ?? null);
   });
 
+  // Whether this host can answer questions at all. A host that cannot run the model loop (the deployed worker, today)
+  // must not be offered as one: the screen asks this before it shows Ask, so nobody types a question into a dead end.
+  app.get('/api/assistant/status', async (c) => {
+    await resolveStub(c);
+    return c.json({ available: Boolean(runAssistant) });
+  });
+
   // Take the turn a person opened with `assistant/send-message` and write the assistant's answer. The person's
   // stub does every read (a thread that is not theirs is `not_found`), so this is no way round a permission.
   // The client polls `assistant/read-events` meanwhile; this resolves once the turn is closed.

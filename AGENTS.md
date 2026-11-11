@@ -509,6 +509,12 @@ host**, and `src/assistant-model.ts` picks the model (`@substrat-run/model-provi
   `read-events`. If the run request itself fails, the client abandons that thread (nothing could write to it).
 - **Model and key.** `ASSISTANT_MODEL` (default `anthropic:claude-sonnet-5-5`) and `ANTHROPIC_API_KEY`, read from the
   server's environment. Unset, the Ask tab says the assistant is not set up and nothing else is affected.
+- **Entitlement.** The engine is its own SKU: `package.json` → `substrat.entitlements` must list it (`["sales-os", "assistant"]`), or a hosted
+  install is granted only its slug and every `assistant/*` call is refused "operation not entitled". An install that existed before the key was
+  declared has to be granted it (the control plane re-delivers through `/internal/reconcile`). The kernel's refusal text lists every key the tenant
+  holds, so the app never shows a server error as the assistant's words (`app/src/assistant.ts`).
+- **Offered only where it can run.** `GET /api/assistant/status` answers `{ available }` (true only when the entrypoint passes `runAssistant`); the
+  screen hides Ask unless it is true.
 - **Not yet on the deployed worker.** `src/worker.ts` passes no `runAssistant`, so the run route answers 503
   there; the engine's journal, permissions and routes are deployed, the loop is not. Needs: a system scope from
   the Cloudflare host, the provider bundled for workerd, the key as a delivered per-install secret, and the

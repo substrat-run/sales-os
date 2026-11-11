@@ -17,14 +17,18 @@ const sleep = (ms: number, signal: AbortSignal) =>
 
 const source: AssistantSource = {
   async *send({ text }, { signal }) {
-    if (!threadId) threadId = (await post<{ id: string }>('/assistant/threads', {})).id;
-    const id = threadId;
+    // A refusal from the server (not entitled, not allowed, unavailable) is the platform talking to us, not the assistant
+    // answering, and its text can carry operational detail. Say one plain thing instead.
+    const unavailable = () => new Error('The assistant is not available in this workspace right now.');
+    let id: string;
     let sent: { lastSeq: number };
     try {
+      if (!threadId) threadId = (await post<{ id: string }>('/assistant/threads', {})).id;
+      id = threadId;
       sent = await post<{ lastSeq: number }>(`/assistant/threads/${id}/messages`, { threadId: id, text });
-    } catch (e) {
+    } catch {
       threadId = null; // a thread that cannot take a question is left behind; the next one starts fresh
-      throw e;
+      throw unavailable();
     }
 
     // Start the answer without waiting for it: it resolves when the turn is closed, and the record is read meanwhile.
@@ -42,7 +46,7 @@ const source: AssistantSource = {
       if (run.error && !page.events.length) {
         // The answer never started, so this turn has no writer and the thread cannot take another question.
         threadId = null;
-        yield { t: 'turn-error', code: 'run_failed', message: run.error.message };
+        yield { t: 'turn-error', code: 'run_failed', message: unavailable().message };
         return;
       }
       await sleep(300, signal);
