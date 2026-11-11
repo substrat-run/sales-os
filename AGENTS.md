@@ -440,6 +440,10 @@ Vite + React + TypeScript, no router or UI library: hash routes, plain CSS, one 
   :8891) plus `pnpm dev:web` (:5174, `WEB_PORT` moves it, `API_PORT` points the proxy). The Vite proxy
   must NOT set `changeOrigin` (the OIDC redirect_uri is derived from the forwarded Host), and targets
   `127.0.0.1` (Node resolves `localhost` to `::1` first and stalls).
+- **Signed-out states** (`app/src/App.tsx`): `/api/me` on a deployed instance answers 200, not 401, until someone is bound:
+  `{status:'needs-setup', firstSignInOpen}`. Only an answer naming a `principal` is "signed in". `firstSignInOpen` is true for
+  **15 minutes after provision** (the first sign-in claims the owner seat); after that the app offers no sign-in, because it
+  would bind nobody, and points at the dashboard's Owner seat card, which mints a one-use claim link.
 - **Screens:** Today, Companies (+ detail: contacts, opportunities, interactions, timeline), Pipeline,
   Import (CSV, flagged rows, duplicate review), Do not contact, Knowledge, Audit.
 - **What a caller sees follows `sales/my-permissions`** (`useCan(key)`): admin-only nav and buttons are

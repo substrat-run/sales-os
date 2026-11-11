@@ -49,7 +49,8 @@ const NAV: [string, string, string | null][] = [
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
-  const [firstSignIn, setFirstSignIn] = useState(false);
+  // null: an ordinary signed-out visitor. 'open' / 'closed': the workspace has no owner yet (see NotSignedIn).
+  const [unclaimed, setUnclaimed] = useState<'open' | 'closed' | null>(null);
   const [fault, setFault] = useState<string | null>(null);
   const route = useRoute();
 
@@ -58,7 +59,7 @@ export function App() {
       // A signed-in answer names a principal. Anything else, a 200 with `needs-setup` included, is "not signed in".
       if ('principal' in r && typeof r.principal === 'string') setMe(r);
       else {
-        setFirstSignIn(Boolean((r as NotSignedIn).firstSignInOpen));
+        if ((r as NotSignedIn).status === 'needs-setup') setUnclaimed((r as NotSignedIn).firstSignInOpen ? 'open' : 'closed');
         setMe(null);
       }
     }, (e: unknown) => {
@@ -70,11 +71,24 @@ export function App() {
   if (fault) return <main className="center"><p className="note error">{fault}</p></main>;
   if (me === undefined) return <main className="center"><p className="muted">Loading…</p></main>;
   if (me === null) {
+    // No owner yet, and the 15-minute first-sign-in window has closed: a plain sign-in binds nobody, so do not offer one.
+    if (unclaimed === 'closed') {
+      return (
+        <main className="center">
+          <h1>Substrat Sales OS</h1>
+          <p className="note">
+            This workspace has not been claimed yet, and the first-sign-in window has closed. Whoever installed it can open
+            the <strong>Owner seat</strong> card for this app in the Substrat dashboard and follow the claim link it gives them.
+            The link works once and expires after 15 minutes.
+          </p>
+        </main>
+      );
+    }
     return (
       <main className="center">
         <h1>Substrat Sales OS</h1>
         <p className="muted">One place for prospects, conversations and what to do next.</p>
-        {firstSignIn && (
+        {unclaimed === 'open' && (
           <p className="note">Nobody has signed in yet. <strong>The first person to sign in becomes the admin</strong> of this workspace.</p>
         )}
         <a className="btn primary" href="/api/auth/login">Sign in</a>
