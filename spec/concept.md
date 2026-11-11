@@ -156,6 +156,7 @@ so we build the API and tests first, then the screens.
 - 2026-11-11 — Ctrl/Cmd+K command palette built (jump to a screen, find a company; Enter opens). It reads only what the person already may read and changes nothing, so it adds no permission and no table. The assistant: see the proposal under section 7.
 
 - 2026-11-11 — Assistant design approved as written (read-only; `assistant:audit` held by nobody; personal data left out of what the model is sent; Anthropic by default with a server-held key). Built: engine composed, four read-only tool operations, the host loop, the Ask tab. No migration of ours; the engine ships its own four tables. Choices made while building, for the reviewer: (a) interaction summaries and relationship context are also excluded from tool results, as both are free text that names people; (b) a source event is written for each entry or company a tool returned, so citations are what the model was shown, not what it claims; (c) the deployed worker does not run the loop yet.
+- 2026-11-11 — Markus approved the assistant's permission diff (`assistant:use` for both roles, own conversations only; `assistant:audit` for nobody; `assistant:run` for the assistant's system identity only) and confirmed it adds no migration of ours (the engine's four tables apply per workspace).
 
 ## 7. Open questions
 
