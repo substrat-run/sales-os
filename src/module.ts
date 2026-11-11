@@ -248,6 +248,17 @@ const registerMemberOp: Op<'sales/register-member'> = async (ctx, input) => {
   return announce(ctx, 'sales/register-member', getRow<MemberRow>(ctx, 'sales_members', input.principalId, 'member'));
 };
 
+const joinOp: Op<'sales/join'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmRead));
+  // Only ever the caller's own row, and the email is the one the issuer verified, never one they typed.
+  ctx.sql.exec(
+    `INSERT INTO sales_members (id, display_name, email, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, email = coalesce(excluded.email, sales_members.email)`,
+    [ctx.principal, input.displayName, ctx.verifiedEmail, ctx.now()],
+  );
+  return announce(ctx, 'sales/join', getRow<MemberRow>(ctx, 'sales_members', ctx.principal, 'member'));
+};
+
 const listMembersOp: Op<'sales/list-members'> = async (ctx, input) => {
   assertAllowed(await ctx.check(SALES_PERM.crmRead));
   return pageRows<MemberRow>(ctx, 'sales_members', [], [], input);
@@ -1001,6 +1012,7 @@ const bound = operationsFor(salesOperations)({
   'sales/assistant-find-companies': assistantFindCompaniesOp,
   'sales/assistant-company': assistantCompanyOp,
   'sales/assistant-today': assistantTodayOp,
+  'sales/join': joinOp,
   'sales/register-member': registerMemberOp,
   'sales/list-members': listMembersOp,
   'sales/create-company': createCompanyOp,

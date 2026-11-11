@@ -343,6 +343,21 @@ describe('sales-os scenario', () => {
     expect((await rex.invoke<{ permissions: string[] }>('sales/my-permissions')).permissions).toEqual([]);
   });
 
+  it('10c. join records a person as themselves, can repeat, and nobody can join as someone else', async () => {
+    const first = await nora.invoke<{ id: string; display_name: string }>('sales/join', { displayName: 'Nora Nilsson' });
+    expect(first).toMatchObject({ id: w.nora, display_name: 'Nora Nilsson' });
+    // Again (a new isolate, or two first requests at once): the same row, not a failure.
+    const again = await nora.invoke<{ id: string }>('sales/join', { displayName: 'Nora Nilsson' });
+    expect(again.id).toBe(w.nora);
+    const members = (await markus.invoke<Page<{ id: string; display_name: string }>>('sales/list-members')).entries;
+    expect(members.filter((m) => m.id === w.nora)).toHaveLength(1);
+    // The row is always the CALLER'S: there is no input that names another person.
+    expect(members.find((m) => m.id === w.markus)?.display_name).toBe('Markus');
+    // A person with no role in this workspace cannot join it.
+    const rex = await host.getScope(w.rex, w.t1, w.s1);
+    await expect(rex.invoke('sales/join', { displayName: 'Rex' })).rejects.toThrow(/permission denied/);
+  });
+
   it('11. the exclusion can be lifted by an admin, and then the company can be added', async () => {
     const [ex] = (await markus.invoke<Page<ExclusionRow>>('sales/list-exclusions')).entries;
     await markus.invoke('sales/lift-exclusion', { exclusionId: ex!.id });

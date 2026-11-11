@@ -15,6 +15,15 @@ interface Me {
   display: string;
 }
 
+/**
+ * What `/api/me` answers when nobody is signed in on a deployed instance: 200, not 401. While the instance
+ * has no owner yet, `firstSignInOpen` is true and the first person to sign in takes the owner seat.
+ */
+interface NotSignedIn {
+  status: string;
+  firstSignInOpen?: boolean;
+}
+
 /** Hash routing: no server rewrite is needed, and a deep link survives a reload. */
 function useRoute(): string[] {
   const read = () => window.location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
@@ -40,11 +49,19 @@ const NAV: [string, string, string | null][] = [
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [firstSignIn, setFirstSignIn] = useState(false);
   const [fault, setFault] = useState<string | null>(null);
   const route = useRoute();
 
   useEffect(() => {
-    get<Me>('/me').then(setMe, (e: unknown) => {
+    get<Me | NotSignedIn>('/me').then((r) => {
+      // A signed-in answer names a principal. Anything else, a 200 with `needs-setup` included, is "not signed in".
+      if ('principal' in r && typeof r.principal === 'string') setMe(r);
+      else {
+        setFirstSignIn(Boolean((r as NotSignedIn).firstSignInOpen));
+        setMe(null);
+      }
+    }, (e: unknown) => {
       if (e instanceof ApiError && e.status === 401) setMe(null);
       else setFault(e instanceof Error ? e.message : String(e));
     });
@@ -57,6 +74,9 @@ export function App() {
       <main className="center">
         <h1>Substrat Sales OS</h1>
         <p className="muted">One place for prospects, conversations and what to do next.</p>
+        {firstSignIn && (
+          <p className="note">Nobody has signed in yet. <strong>The first person to sign in becomes the admin</strong> of this workspace.</p>
+        )}
         <a className="btn primary" href="/api/auth/login">Sign in</a>
       </main>
     );

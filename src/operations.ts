@@ -119,6 +119,24 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
   },
 
   // ------------------------------------------------------------ members
+  'sales/join': {
+    summary: 'Record the caller as a member of this workspace: their own display name, and the address their issuer verified',
+    // Run by the sign-in door the first time a person reaches the workspace, and again on a new isolate, so it
+    // returns the row it already wrote. Every role holds `crm:read`, so a colleague an admin added is never
+    // refused at the door; and a person can only ever write THEIR OWN row (the id is the caller's), so this
+    // grants nothing and widens no one's access.
+    permission: 'crm:read',
+    input: z.object({ displayName: z.string().min(1).max(200) }),
+    output: E.member.fields,
+    emits: {
+      entity: 'member',
+      entityIdFrom: 'id',
+      type: 'sales.member-registered',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id'],
+    },
+  },
   'sales/register-member': {
     summary: 'Record who a person is: the display name shown wherever they own or change something',
     permission: 'member:manage',

@@ -156,13 +156,16 @@ function hostFor(env: Env): CloudflareScopeHost {
  * `send` checks who may invite, records the invite for the screens and queues the mail ("sign in
  * with this address"); it must not grant anything to `i.principal`. server.ts names the same three.
  *
- * This shop has none of these: its people are added by staff, and its portal shape is a customer's.
+ * Sales OS names `join` (below); its people are added by staff, so it names no `invites`.
  */
 const door = workerDoor<Env>({
   directory: (env, node) => env.AUTH.get(env.AUTH.idFromName(node.tenantId)),
   nodeFor,
   hostFor,
   envSpec,
+  // A person is recorded as a member the first time they reach the workspace, so the owner's name shows
+  // where they own or change something instead of "someone". The first person in takes the owner seat.
+  join: (scope, who) => scope.invoke('sales/join', { displayName: who.display }),
 });
 
 /** The caller's scope stub. 401 if nobody. */
