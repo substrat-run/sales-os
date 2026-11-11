@@ -159,6 +159,7 @@ so we build the API and tests first, then the screens.
 - 2026-11-11 — Markus approved the assistant's permission diff (`assistant:use` for both roles, own conversations only; `assistant:audit` for nobody; `assistant:run` for the assistant's system identity only) and confirmed it adds no migration of ours (the engine's four tables apply per workspace).
 - 2026-11-11 — Left menu on a desktop (the same markup is the top bar on a narrow screen) and a Settings page built: appearance (three Substrat looks, light / dark / match my device, kept in this browser) and a read-only team list. No permission, table or operation changed. Managing the team (inviting people) is proposed under section 7, awaiting a choice.
 - 2026-11-11 — Team invitations: option A (the sign-in door's member invites) chosen by Markus. Roles offered: Admin and Member; changing a role or removing a person stays in the Substrat dashboard (the proposal's defaults, not separately answered). `engine-invites` was reconsidered after Markus pointed out other apps use it: the `podcasts` app uses it only on its local server and uses the directory invitations when hosted, for the reason recorded in section 7.
+- 2026-11-11 — Markus approved the team-invitations migration (`0002-invites`: one table, `sales_invites`) and confirmed the permission diff: no new key; `member:manage` (admin only) now also covers inviting, listing and withdrawing invitations.
 
 ## 7. Open questions
 
@@ -232,7 +233,7 @@ agent" field, and exclusions and opt-outs exist before anything can be sent.
 
 ### Proposed change (v0.3, awaiting approval): managing the team from Settings
 
-**Status: proposal. Nothing below is built. The Settings page shows the team today, read-only.**
+**Status: option A approved by Markus 2026-11-11 and built.**
 
 **What a person would see.** Settings → Team, for admins: **Invite** (an email address and a role, *Admin* or *Member*), and a list of **pending invitations** with *Withdraw*. The invited person signs in with that address and is let in with that role: no link and no email is needed, the inviter simply tells them to sign in. Once they have, they appear in the team list.
 
