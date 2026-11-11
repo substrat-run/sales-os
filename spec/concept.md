@@ -157,6 +157,7 @@ so we build the API and tests first, then the screens.
 
 - 2026-11-11 — Assistant design approved as written (read-only; `assistant:audit` held by nobody; personal data left out of what the model is sent; Anthropic by default with a server-held key). Built: engine composed, four read-only tool operations, the host loop, the Ask tab. No migration of ours; the engine ships its own four tables. Choices made while building, for the reviewer: (a) interaction summaries and relationship context are also excluded from tool results, as both are free text that names people; (b) a source event is written for each entry or company a tool returned, so citations are what the model was shown, not what it claims; (c) the deployed worker does not run the loop yet.
 - 2026-11-11 — Markus approved the assistant's permission diff (`assistant:use` for both roles, own conversations only; `assistant:audit` for nobody; `assistant:run` for the assistant's system identity only) and confirmed it adds no migration of ours (the engine's four tables apply per workspace).
+- 2026-11-11 — Left menu on a desktop (the same markup is the top bar on a narrow screen) and a Settings page built: appearance (three Substrat looks, light / dark / match my device, kept in this browser) and a read-only team list. No permission, table or operation changed. Managing the team (inviting people) is proposed under section 7, awaiting a choice.
 
 ## 7. Open questions
 
@@ -227,3 +228,42 @@ agent" field, and exclusions and opt-outs exist before anything can be sent.
 1. Is it acceptable that knowledge entries and non-personal company text are sent to the model provider while a question is answered? If not, the alternatives are an EU-hosted provider or a local model.
 2. Should `assistant:audit` stay with nobody? (Granting it to admins would let them read colleagues' conversations.)
 3. Is read-only the right v1, with actions added later behind approvals?
+
+### Proposed change (v0.3, awaiting approval): managing the team from Settings
+
+**Status: proposal. Nothing below is built. The Settings page shows the team today, read-only.**
+
+**What a person would see.** Settings → Team, for admins: **Invite** (an email address and a role, *Admin* or *Member*), and a list of **pending invitations** with *Withdraw*. The invited person signs in with that address and is let in with that role: no link and no email is needed, the inviter simply tells them to sign in. Once they have, they appear in the team list.
+
+**What cannot be done from the app, and why.** *Changing someone's role* and *removing someone* are platform administration (assigning and revoking roles in the workspace's directory). Substrat gives a vertical no way to do either from its own code, and this version documents none. They stay in the Substrat dashboard, and Settings says so. (If you need them in the app, that is a request to the platform, not something to work around here.)
+
+**Two ways to build the invitation, and a recommendation.**
+
+| | **A. The sign-in door's member invites** *(recommended)* | **B. `engine-invites`** |
+|---|---|---|
+| What it is | The platform's path into a *workspace*: it creates the member with a role, admits them by their verified address, and can be withdrawn. The worker's door already mounts the two routes. | A record of an offer to join an *organization*, designed to be non-enumerable (addresses stored hashed, never listed). |
+| Who gets the role | The platform binds the new person to the role, bounded by the inviter's own permissions: an admin can never invite someone to more than they hold. | The engine's job "ends at *this person said yes*": it emits `member.add-requested` and expects a platform executor to add the member. Binding them to a role in this workspace is not covered. |
+| Maturity | Used by the platform's own sign-in; documented end to end. | Published, but **no vertical composes it today**, so we would be the first, and its docs say its own suite is the only reference. |
+| What we store | One table of ours (`sales_invites`): who was invited, with which role, by whom, and whether they have arrived. | The engine's own tables, plus our own membership table. |
+
+I recommend **A**. It is the path that actually puts a person into this workspace with a role. B is the better fit if we later need organizations with many teams, or invitations that must never reveal whether an address is already known.
+
+**Who is denied what (the permission preview).** No new permission key. Inviting, withdrawing and listing invitations all require the existing `member:manage`, which only `sales-admin` holds. A `sales-member` sees the team list but no Invite controls. The platform refuses an invitation to a role the inviter does not themselves hold.
+- *Who can see the money?* Unchanged: both roles still see value ranges.
+- *Who can see other workspaces' data?* Nobody.
+- *New thing to be aware of:* an admin can now let a person into the workspace. Whoever holds `sales-admin` is trusted with that.
+
+**Data we'd store (previews the migration, option A).** `sales_invites`: the invited person's id, their address *(personal data, marked erasable)*, the role, who invited them, when, and a status (open, withdrawn, arrived). One migration, `0002`, which we would show you verbatim before it ships.
+
+**Operations (option A).** `sales/invite-member`, `sales/cancel-invite`, `sales/list-invites`, plus a small change to `sales/join` so it marks an invitation as arrived. Wired into the worker's door as its `invites`, and into the local dev server so it can be tried locally with a persona that is not yet a member.
+
+**The scenario the tests will replay.** An admin invites an address as a member; the invitation is listed; the person signs in with that address and arrives with only the member's permissions; an admin cannot invite someone to a role they do not hold; a member cannot invite, list or withdraw; a withdrawn invitation admits nobody; a second invitation to the same address is refused while one is open; a cross-workspace user gets nothing.
+
+**Out of scope.** Sending email, changing a role, removing a member, inviting someone as the owner.
+
+**Risks and unknowns.** (1) The hosted behaviour (the door admitting by verified address, and the platform's role bound) can only be fully verified on your deployment; locally it runs through the dev issuer's equivalent. (2) The invite is by address, so it only works if the person's sign-in provider verifies that address. (3) Option B, if chosen, carries the "first vertical to compose it" risk.
+
+**Review questions for the human.**
+1. A (the door's member invites, recommended) or B (`engine-invites`)?
+2. Are *Admin* and *Member* the right roles to offer?
+3. Is it acceptable that changing a role or removing someone stays in the Substrat dashboard for now?

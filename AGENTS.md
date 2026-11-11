@@ -447,6 +447,10 @@ Vite + React + TypeScript, no router or UI library: hash routes, plain CSS, one 
 - **Claim links** (`app/src/claim.ts`): `/?claim=<secret>` is read once, moved out of the address bar into sessionStorage (it survives the
   sign-in round trip, which drops the query string) and redeemed with `POST /api/claim-owner { token }` once somebody is signed in. 401 =
   not signed in yet, nothing spent; 400 = invalid, expired or already used. The app never shows a Sign in button that cannot bind anyone.
+- **Layout:** one `<aside className="side">` is a left menu at 900px and up and the top bar below it (`app/src/styles.css`). Settings (`#/settings`, in the
+  menu's footer, not the main list) holds Appearance and the Team list. The look and light/dark are a personal preference kept in
+  localStorage (`app/src/theme.ts`, applied before first paint by `initTheme()` in `main.tsx`): three Substrat themes (Ledger, Standard = Web Awesome's
+  base, Atelier) and `wa-dark` from "match my device" / light / dark. Managing the team (inviting) is **proposed, not built** (`spec/concept.md`, section 7).
 - **Screens:** Today, Companies (+ detail: contacts, opportunities, interactions, timeline), Pipeline,
   Import (CSV, flagged rows, duplicate review), Do not contact, Knowledge, Audit.
 - **What a caller sees follows `sales/my-permissions`** (`useCan(key)`): admin-only nav and buttons are

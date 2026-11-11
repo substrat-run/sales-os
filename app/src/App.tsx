@@ -9,6 +9,7 @@ import { Companies, CompanyDetail } from './views/Companies';
 import { Pipeline } from './views/Pipeline';
 import { ImportView, Exclusions } from './views/Import';
 import { KnowledgeView } from './views/Knowledge';
+import { Settings } from './views/Settings';
 import { AuditView } from './views/Audit';
 
 interface Me {
@@ -148,34 +149,43 @@ function Shell({ me, route }: { me: Me; route: string[] }) {
   return (
     <CanProvider value={can}>
     <MembersProvider value={members.data ?? new Map()}>
-      <header className="top">
-        <strong className="brand">Substrat Sales OS</strong>
-        <nav>
-          {visible.map(([key, label]) => (
-            <a key={key} href={`#/${key}`} className={section === key ? 'active' : ''}>
-              {label}
-            </a>
-          ))}
-        </nav>
-        {can.has('assistant:use') && (
-          <button onClick={() => window.dispatchEvent(new CustomEvent(OPEN_PALETTE, { detail: { mode: 'ask' } }))}>Ask</button>
-        )}
-        <button className="search" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_PALETTE, { detail: { mode: 'go' } }))} aria-label="Search (Ctrl K)">
-          Search <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
-        </button>
-        <UserMenu session={me} />
-        <CommandPalette screens={visible.map(([route, label]) => ({ route, label }))} canAsk={can.has('assistant:use')} />
-      </header>
-      <main>
-        {section === 'today' && <Today />}
-        {section === 'companies' && (id ? <CompanyDetail id={id} /> : <Companies />)}
-        {section === 'pipeline' && <Pipeline />}
-        {section === 'import' && (can.has('import:run') ? <ImportView /> : <p className="note denied">Importing is for admins.</p>)}
-        {section === 'exclusions' && (<><h1>Do not contact</h1><Exclusions /></>)}
-        {section === 'knowledge' && <KnowledgeView />}
-        {section === 'audit' && (can.has('audit:read') ? <AuditView entityType={route[1]} entityId={route[2]} /> : <p className="note denied">The audit trail is for admins.</p>)}
-        {!NAV.some(([k]) => k === section) && <p className="muted">Nothing here.</p>}
-      </main>
+      <div className="layout">
+        {/* A left menu on a desktop; the same markup becomes the top bar on a narrow screen (see styles.css). */}
+        <aside className="side">
+          <strong className="brand">Substrat Sales OS</strong>
+          <nav className="menu" aria-label="Main">
+            {visible.map(([key, label]) => (
+              <a key={key} href={`#/${key}`} className={section === key ? 'active' : ''}>
+                {label}
+              </a>
+            ))}
+          </nav>
+          <div className="side-foot">
+            {can.has('assistant:use') && (
+              <button onClick={() => window.dispatchEvent(new CustomEvent(OPEN_PALETTE, { detail: { mode: 'ask' } }))}>Ask</button>
+            )}
+            <button className="search" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_PALETTE, { detail: { mode: 'go' } }))} aria-label="Search (Ctrl K)">
+              Search <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
+            </button>
+            <nav className="menu" aria-label="Account">
+              <a href="#/settings" className={section === 'settings' ? 'active' : ''}>Settings</a>
+            </nav>
+            <UserMenu session={me} />
+          </div>
+        </aside>
+        <main>
+          {section === 'today' && <Today />}
+          {section === 'companies' && (id ? <CompanyDetail id={id} /> : <Companies />)}
+          {section === 'pipeline' && <Pipeline />}
+          {section === 'import' && (can.has('import:run') ? <ImportView /> : <p className="note denied">Importing is for admins.</p>)}
+          {section === 'exclusions' && (<><h1>Do not contact</h1><Exclusions /></>)}
+          {section === 'knowledge' && <KnowledgeView />}
+          {section === 'audit' && (can.has('audit:read') ? <AuditView entityType={route[1]} entityId={route[2]} /> : <p className="note denied">The audit trail is for admins.</p>)}
+          {section === 'settings' && <Settings meId={me.principal} />}
+          {!NAV.some(([k]) => k === section) && section !== 'settings' && <p className="muted">Nothing here.</p>}
+        </main>
+      </div>
+      <CommandPalette screens={[...visible.map(([route, label]) => ({ route, label })), { route: 'settings', label: 'Settings' }]} canAsk={can.has('assistant:use')} />
     </MembersProvider>
     </CanProvider>
   );

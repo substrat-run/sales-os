@@ -13,13 +13,8 @@
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; }
 a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
 h1 { font-size: 1.5rem; margin: 0 0 1rem; } h2 { font-size: 1.05rem; margin: 0; } h3 { font-size: .8rem; margin: 0 0 .5rem; text-transform: uppercase; letter-spacing: .04em; }
-main { max-width: 1280px; margin: 0 auto; padding: 1.25rem 16px 4rem; }
+main { max-width: 1180px; margin: 0 auto; padding: 1.25rem 16px 4rem; width: 100%; min-width: 0; }
 main.center { min-height: 70vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem; text-align: center; }
-.top { display: flex; align-items: center; gap: 1.25rem; padding: .6rem 16px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
-.top nav { display: flex; gap: .25rem; flex: 1; flex-wrap: wrap; }
-.top nav a { padding: .3rem .7rem; border-radius: 6px; color: var(--text); } .top nav a.active { background: var(--chip); font-weight: 600; }
-sub-user-menu { margin-left: 0; }
-.top .search { display: flex; gap: .5rem; align-items: center; color: var(--muted); }
 kbd { font: inherit; font-size: .75rem; padding: 0 .35rem; border: 1px solid var(--line); border-radius: 4px; background: var(--chip); }
 ul.palette { list-style: none; margin: .75rem 0 0; padding: 0; max-height: 50vh; overflow: auto; }
 ul.palette li { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem .6rem; border-radius: 6px; cursor: pointer; }
@@ -65,3 +60,34 @@ code { background: var(--chip); padding: 0 .3rem; border-radius: 4px; }
 
 .tabs { display: flex; gap: .25rem; margin-bottom: .75rem; } .tabs button { border-color: transparent; background: transparent; color: var(--muted); }
 .tabs button.on { background: var(--chip); color: var(--text); font-weight: 600; } .ask-note { font-size: .8rem; margin: .5rem 0 0; }
+
+/* ---- Layout: a left menu on a desktop, the same markup as a top bar on a narrow screen ---- */
+.layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
+.side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 1rem; padding: 1rem .75rem; background: var(--card); border-right: 1px solid var(--line); overflow-y: auto; }
+.side .brand { padding: 0 .6rem; font-size: 1rem; }
+.menu { display: flex; flex-direction: column; gap: 2px; }
+.menu a { padding: .45rem .7rem; border-radius: 6px; color: var(--text); } .menu a:hover { background: var(--chip); text-decoration: none; }
+.menu a.active { background: var(--chip); font-weight: 600; }
+.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: .5rem; }
+.side-foot > button { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+.side-foot sub-user-menu { align-self: flex-start; padding: .25rem .5rem; }
+@media (max-width: 899px) {
+  .layout { display: block; }
+  .side { height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: .6rem 16px; border-right: 0; border-bottom: 1px solid var(--line); z-index: 2; overflow: visible; }
+  .side .brand { padding: 0; }
+  .menu { flex-direction: row; flex-wrap: wrap; flex: 1 1 100%; order: 3; }
+  .side-foot { margin-top: 0; margin-left: auto; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center; max-width: 100%; }
+  .side-foot sub-user-menu { padding: 0; }
+  .side-foot > button { width: auto; gap: .5rem; }
+  .side-foot .menu { flex: 0 0 auto; order: 0; }
+}
+
+/* ---- Settings ---- */
+h3 { margin: 1rem 0 .5rem; }
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .6rem; }
+.choice { display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; text-align: left; padding: .75rem; }
+.choice.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.segmented button { border: 0; border-radius: 0; background: transparent; padding: .45rem .9rem; }
+.segmented button + button { border-left: 1px solid var(--line); }
+.segmented button.on { background: var(--accent); color: var(--accent-text); }
