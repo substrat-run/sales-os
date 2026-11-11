@@ -3,6 +3,7 @@ import { ApiError, get, useLoad } from './api';
 import { CanProvider, MembersProvider, useMembersLoader } from './ui';
 import { UserMenu } from './elements';
 import { CommandPalette, OPEN_PALETTE } from './Palette';
+import { dropHeldClaim, redeemHeldClaim, takeClaimFromUrl } from './claim';
 import { Today } from './views/Today';
 import { Companies, CompanyDetail } from './views/Companies';
 import { Pipeline } from './views/Pipeline';
@@ -51,26 +52,65 @@ export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   // null: an ordinary signed-out visitor. 'open' / 'closed': the workspace has no owner yet (see NotSignedIn).
   const [unclaimed, setUnclaimed] = useState<'open' | 'closed' | null>(null);
+  // A claim link the person arrived with: waiting for them to sign in, or refused.
+  const [claim, setClaim] = useState<'sign-in' | 'refused' | null>(null);
   const [fault, setFault] = useState<string | null>(null);
   const route = useRoute();
 
   useEffect(() => {
-    get<Me | NotSignedIn>('/me').then((r) => {
-      // A signed-in answer names a principal. Anything else, a 200 with `needs-setup` included, is "not signed in".
-      if ('principal' in r && typeof r.principal === 'string') setMe(r);
-      else {
-        if ((r as NotSignedIn).status === 'needs-setup') setUnclaimed((r as NotSignedIn).firstSignInOpen ? 'open' : 'closed');
-        setMe(null);
+    takeClaimFromUrl();
+    const load = async (): Promise<void> => {
+      let r: Me | NotSignedIn;
+      try {
+        r = await get<Me | NotSignedIn>('/me');
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) setMe(null);
+        else setFault(e instanceof Error ? e.message : String(e));
+        return;
       }
-    }, (e: unknown) => {
-      if (e instanceof ApiError && e.status === 401) setMe(null);
-      else setFault(e instanceof Error ? e.message : String(e));
-    });
+      // A signed-in answer names a principal. Anything else, a 200 with `needs-setup` included, is "not signed in".
+      if ('principal' in r && typeof r.principal === 'string') {
+        dropHeldClaim();
+        setMe(r);
+        return;
+      }
+      const setup = (r as NotSignedIn).status === 'needs-setup';
+      if (setup) {
+        // An unclaimed workspace and a claim link in hand: redeem it. Signed out, that is a 401 that spends nothing.
+        const outcome = await redeemHeldClaim();
+        if (outcome === 'claimed') return load(); // now bound: ask who we are again
+        if (outcome === 'sign-in' || outcome === 'refused') setClaim(outcome);
+        setUnclaimed((r as NotSignedIn).firstSignInOpen ? 'open' : 'closed');
+      }
+      setMe(null);
+    };
+    void load();
   }, []);
 
   if (fault) return <main className="center"><p className="note error">{fault}</p></main>;
   if (me === undefined) return <main className="center"><p className="muted">Loading…</p></main>;
   if (me === null) {
+    // A claim link, but nobody is signed in: signing in is the next step, and the link is kept for it.
+    if (claim === 'sign-in') {
+      return (
+        <main className="center">
+          <h1>Substrat Sales OS</h1>
+          <p className="note">You have a claim link for this workspace. <strong>Sign in to become its admin.</strong></p>
+          <a className="btn primary" href="/api/auth/login">Sign in</a>
+        </main>
+      );
+    }
+    if (claim === 'refused') {
+      return (
+        <main className="center">
+          <h1>Substrat Sales OS</h1>
+          <p className="note error">
+            That claim link is invalid, expired or already used. Open the <strong>Owner seat</strong> card in the Substrat
+            dashboard and mint a new one.
+          </p>
+        </main>
+      );
+    }
     // No owner yet, and the 15-minute first-sign-in window has closed: a plain sign-in binds nobody, so do not offer one.
     if (unclaimed === 'closed') {
       return (

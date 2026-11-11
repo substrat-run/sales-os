@@ -176,7 +176,8 @@ daily queue, exclusions and opt-outs, the audit trail, edit-conflict protection,
 A new instance has an empty owner seat. For **15 minutes after it is provisioned**, the first person to sign in takes it
 and becomes `sales-admin`. After that a plain sign-in binds nobody (`/api/me` answers `needs-setup` with
 `firstSignInOpen: false`, and the app says so). The installer then opens the **Owner seat** card for the app in the
-Substrat dashboard and follows the one-use claim link it mints (valid 15 minutes).
+Substrat dashboard and follows the one-use claim link it mints (valid 15 minutes). The link looks like `/?claim=…`: the app takes the secret out of the
+address bar, asks you to sign in if you haven't (a signed-out attempt spends nothing), then redeems it with `POST /api/claim-owner`.
 
 The design, including the reasoning behind each choice, is in [`spec/concept.md`](spec/concept.md). Rules for working
 on the code, whether you are a person or an agent, are in [`AGENTS.md`](AGENTS.md).

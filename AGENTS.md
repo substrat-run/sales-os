@@ -444,6 +444,9 @@ Vite + React + TypeScript, no router or UI library: hash routes, plain CSS, one 
   `{status:'needs-setup', firstSignInOpen}`. Only an answer naming a `principal` is "signed in". `firstSignInOpen` is true for
   **15 minutes after provision** (the first sign-in claims the owner seat); after that the app offers no sign-in, because it
   would bind nobody, and points at the dashboard's Owner seat card, which mints a one-use claim link.
+- **Claim links** (`app/src/claim.ts`): `/?claim=<secret>` is read once, moved out of the address bar into sessionStorage (it survives the
+  sign-in round trip, which drops the query string) and redeemed with `POST /api/claim-owner { token }` once somebody is signed in. 401 =
+  not signed in yet, nothing spent; 400 = invalid, expired or already used. The app never shows a Sign in button that cannot bind anyone.
 - **Screens:** Today, Companies (+ detail: contacts, opportunities, interactions, timeline), Pipeline,
   Import (CSV, flagged rows, duplicate review), Do not contact, Knowledge, Audit.
 - **What a caller sees follows `sales/my-permissions`** (`useCan(key)`): admin-only nav and buttons are
