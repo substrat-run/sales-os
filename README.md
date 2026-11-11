@@ -22,6 +22,7 @@ small team.** It is not a general-purpose CRM and not a marketing suite.
 | **Import** | Paste or upload a CSV of companies and contacts. Rows are matched, never silently merged. Anything unclear (a probable duplicate, a missing company, an email already on another company) is flagged for a person. |
 | **Do not contact** | Companies and domains that must never be contacted. An import skips them. |
 | **Knowledge** | The approved source of truth: positioning, capabilities, ICP, pricing, security, FAQs, cases. Every claim is labelled **shipped**, **built but unproven**, or **bet**, and has a source and a date. |
+| **Settings** | Appearance (three looks, light / dark / match my device, kept in this browser) and the **team**: who has joined, and for admins, inviting people with a role. |
 | **Audit** | Admins only. Every change to a record: what, when, who or what made it, and which permission allowed it. |
 | **Ctrl/Cmd+K** | Jump to a screen or find a company. The **Ask** tab is the assistant. |
 
@@ -73,6 +74,7 @@ There are two roles, and no prospect or customer ever signs in.
 | Write, approve and retire knowledge entries | ✔ | – |
 | Lift an exclusion or an opt-out | ✔ | – |
 | Read the full audit trail | ✔ | – |
+| Invite people to the workspace, and withdraw an invitation | ✔ | – |
 
 Opportunity value ranges are visible to both roles. Each workspace is its own isolated database: there is no way to
 ask for another workspace's companies, contacts or notes, and the tests prove it.
@@ -170,6 +172,12 @@ daily queue, exclusions and opt-outs, the audit trail, edit-conflict protection,
   does not yet (it needs a system scope from the Cloudflare host, the provider bundled for the worker, and the key as a
   per-install secret).
 - **Real sign-in.** Local development uses a dev issuer. A deployment needs a separate OIDC issuer.
+
+### Inviting people
+
+An admin invites someone from **Settings → Team** with an email address and a role (Admin or Member). Nothing is emailed: the invited
+person opens the app and signs in with that address, and is let in with that role. The sign-in door enforces that an inviter can never
+give someone more than they hold. Changing a role or removing someone is done in the Substrat dashboard.
 
 ### Claiming a deployed workspace
 

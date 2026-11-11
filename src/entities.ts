@@ -164,6 +164,23 @@ export const salesEntities = defineEntities({
     key: ['id'],
     erasable: ['display_name', 'email'],
   },
+  invite: {
+    table: 'sales_invites',
+    fields: z.object({
+      // The invited person's principal id, minted by the platform when the invitation is made. It is who they
+      // become on arrival, so an invitation, the member row and every event after it share one id.
+      id: z.string(),
+      email: z.string(),
+      role_key: z.string(),
+      invited_by: z.string(),
+      status: z.string(),
+      expires_at: z.string(),
+      created_at: z.string(),
+      settled_at: z.string().nullable(),
+    }),
+    key: ['id'],
+    erasable: ['email'],
+  },
   import_batch: {
     table: 'sales_import_batches',
     fields: z.object({

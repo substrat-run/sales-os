@@ -118,6 +118,51 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
     }),
   },
 
+  // ------------------------------------------------------------ team invitations
+  // The sign-in door calls these AS THE INVITER, around its own routes (`POST /api/member-invites` and its
+  // withdrawal). The platform mints the invited principal and enforces that an admin can never invite someone to
+  // more than the admin holds; these only record the invitation so Settings can show it. They grant nothing.
+  'sales/invite-member': {
+    summary: 'Record an invitation to join this workspace with a role. Called by the sign-in door; grants nothing itself',
+    permission: 'member:manage',
+    input: z.object({
+      principal: id,
+      email: z.string().min(3).max(254),
+      roleKey: z.enum(['sales-admin', 'sales-member']),
+      expiresAt: z.string().min(10),
+    }),
+    output: E.invite.fields,
+    emits: {
+      entity: 'invite',
+      entityIdFrom: 'id',
+      type: 'sales.invite-created',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'role_key', 'invited_by', 'status', 'expires_at'],
+    },
+  },
+  'sales/cancel-invite': {
+    summary: 'Withdraw an open invitation. Called by the sign-in door; withdrawing twice is not an error',
+    permission: 'member:manage',
+    input: z.object({ principal: id }),
+    output: E.invite.fields,
+    emits: {
+      entity: 'invite',
+      entityIdFrom: 'id',
+      type: 'sales.invite-withdrawn',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'role_key', 'status'],
+    },
+  },
+  'sales/list-invites': {
+    summary: 'Invitations to join this workspace, with whether each is still open, expired, withdrawn, or the person has arrived',
+    permission: 'member:manage',
+    output: E.invite.fields,
+    paged: { sortKey: 'id' },
+    http: { method: 'GET', path: '/team/invites' },
+  },
+
   // ------------------------------------------------------------ members
   'sales/join': {
     summary: 'Record the caller as a member of this workspace: their own display name, and the address their issuer verified',

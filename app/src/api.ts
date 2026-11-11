@@ -166,6 +166,10 @@ export interface Knowledge {
   source_date: string | null; status: string; created_by: string; approved_by: string | null;
   approved_at: string | null; created_at: string; updated_at: string;
 }
+export interface Invite {
+  id: string; email: string; role_key: string; invited_by: string; status: string;
+  expires_at: string; created_at: string; settled_at: string | null;
+}
 export interface Exclusion { id: string; kind: string; value: string; reason: string; created_by: string; created_at: string }
 export interface Member { id: string; display_name: string; email: string | null; created_at: string }
 export interface Batch {

@@ -11,6 +11,8 @@ export const PERSONAS: DevPersona[] = [
   { sub: 'dev|markus', name: 'Markus', email: 'markus@substrat.test', note: 'sales-admin' },
   { sub: 'dev|martin', name: 'Martin', email: 'martin@substrat.test', note: 'sales-admin' },
   { sub: 'dev|nora', name: 'Nora', email: 'nora@substrat.test', note: 'sales-member' },
+  // Not a member of anything yet: invite ida@substrat.test from Settings → Team, then sign in as Ida to arrive.
+  { sub: 'dev|ida', name: 'Ida', email: 'ida@substrat.test', note: 'not a member yet (invite her)' },
   // The other workspace, so the cross-tenant beat has someone to be turned away as.
   { sub: 'dev|rex', name: 'Rex', email: 'rex@rival.test', note: 'admin at a DIFFERENT workspace' },
 ];

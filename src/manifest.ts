@@ -65,7 +65,12 @@ export const salesManifest = moduleManifest.parse({
   // Derived from the operations' own `emits`, so the list cannot drift from them.
   // `sales.duplicate-flagged` is emitted by the import, which declares one `emits` of its own.
   events: {
-    emits: [...eventsEmittedBy(salesOperations), { type: 'sales.duplicate-flagged', schemaVersion: 1 }],
+    emits: [
+      ...eventsEmittedBy(salesOperations),
+      { type: 'sales.duplicate-flagged', schemaVersion: 1 },
+      // Emitted by `sales/join` when a person arrives on an open invitation.
+      { type: 'sales.invite-arrived', schemaVersion: 1 },
+    ],
     consumes: [],
   },
   migrations: { journalDir: './migrations', compatibleFrom: '0.0.1' },

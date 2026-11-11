@@ -40,7 +40,7 @@ describe('the registry agrees with the migration journal', () => {
 
   it('parsed the journal at all', () => {
     // A comparison that silently parsed nothing would pass everything under it.
-    expect(journal.size).toBe(11);
+    expect(journal.size).toBe(12);
     expect(journal.get('sales_companies')?.size).toBeGreaterThan(1);
   });
 
@@ -67,6 +67,7 @@ describe('the declared model and the manifest agree', () => {
     expect(salesEntities.contact.erasable).toEqual(['name', 'email', 'phone']);
     expect(salesEntities.interaction.erasable).toEqual(['summary', 'customer_quote']);
     expect(salesEntities.member.erasable).toEqual(['display_name', 'email']);
+    expect(salesEntities.invite.erasable).toEqual(['email']);
   });
 
   it('announces every mutation: the manifest lists the events the operations declare', () => {

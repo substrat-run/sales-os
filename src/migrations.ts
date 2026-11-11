@@ -151,4 +151,20 @@ export const salesMigrations: SqlMigration[] = [
       );
     `,
   },
+  {
+    version: '0002-invites',
+    sql: `
+      CREATE TABLE sales_invites (
+        id         TEXT PRIMARY KEY,
+        email      TEXT NOT NULL,
+        role_key   TEXT NOT NULL,
+        invited_by TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'open',
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        settled_at TEXT
+      );
+      CREATE INDEX sales_invites_email ON sales_invites(email);
+    `,
+  },
 ];

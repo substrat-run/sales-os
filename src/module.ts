@@ -44,6 +44,7 @@ export type ExclusionRow = Row<'exclusion'>;
 export type MemberRow = Row<'member'>;
 export type BatchRow = Row<'import_batch'>;
 export type DuplicateRow = Row<'duplicate'>;
+export type InviteRow = Row<'invite'>;
 export type ImportRowRow = z.infer<typeof importRow>;
 
 type Op<K extends keyof typeof salesOperations> = OperationHandler<
@@ -250,6 +251,21 @@ const registerMemberOp: Op<'sales/register-member'> = async (ctx, input) => {
 
 const joinOp: Op<'sales/join'> = async (ctx, input) => {
   assertAllowed(await ctx.check(SALES_PERM.crmRead));
+  // Arriving on an open invitation (its id IS this person's principal) settles it.
+  const now = ctx.now();
+  const arrived = ctx.sql.exec(
+    `UPDATE sales_invites SET status = 'arrived', settled_at = ? WHERE id = ? AND status = 'open'`,
+    [now, ctx.principal],
+  ).changes;
+  if (arrived) {
+    ctx.emit({
+      type: 'sales.invite-arrived',
+      schemaVersion: 1,
+      entity: { entityType: 'invite', entityId: ctx.principal },
+      piiClass: 'none',
+      payload: { id: ctx.principal, status: 'arrived' },
+    } as Parameters<Ctx['emit']>[0]);
+  }
   // Only ever the caller's own row, and the email is the one the issuer verified, never one they typed.
   ctx.sql.exec(
     `INSERT INTO sales_members (id, display_name, email, created_at) VALUES (?, ?, ?, ?)
@@ -257,6 +273,47 @@ const joinOp: Op<'sales/join'> = async (ctx, input) => {
     [ctx.principal, input.displayName, ctx.verifiedEmail, ctx.now()],
   );
   return announce(ctx, 'sales/join', getRow<MemberRow>(ctx, 'sales_members', ctx.principal, 'member'));
+};
+
+// --------------------------------------------------------- team invitations
+
+/** An open invitation past its expiry reads as `expired`; the row is untouched (a read settles nothing). */
+function effective(row: InviteRow, now: string): InviteRow {
+  return row.status === 'open' && row.expires_at <= now ? { ...row, status: 'expired' } : row;
+}
+
+const inviteMemberOp: Op<'sales/invite-member'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.memberManage));
+  const email = input.email.trim().toLowerCase();
+  const now = ctx.now();
+  // The admin may be told "already on the team": it comes from OUR member list, which they can already read.
+  if (ctx.sql.query('SELECT 1 FROM sales_members WHERE lower(email) = ?', [email])[0]) {
+    throw substratError('conflict', 'that address is already on the team');
+  }
+  const open = ctx.sql.query<InviteRow>(`SELECT * FROM sales_invites WHERE email = ? AND status = 'open' AND expires_at > ?`, [email, now])[0];
+  if (open) throw substratError('conflict', 'that address already has an open invitation');
+  ctx.sql.exec(
+    `INSERT INTO sales_invites (id, email, role_key, invited_by, status, expires_at, created_at, settled_at)
+     VALUES (?, ?, ?, ?, 'open', ?, ?, NULL)`,
+    [input.principal, email, input.roleKey, ctx.principal, input.expiresAt, now],
+  );
+  return announce(ctx, 'sales/invite-member', getRow<InviteRow>(ctx, 'sales_invites', input.principal, 'invitation'));
+};
+
+const cancelInviteOp: Op<'sales/cancel-invite'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.memberManage));
+  const inv = getRow<InviteRow>(ctx, 'sales_invites', input.principal, 'invitation');
+  if (inv.status === 'withdrawn') return inv; // a retry
+  if (inv.status === 'arrived') throw substratError('conflict', 'that person has already arrived; an invitation cannot be withdrawn');
+  ctx.sql.exec(`UPDATE sales_invites SET status = 'withdrawn', settled_at = ? WHERE id = ?`, [ctx.now(), inv.id]);
+  return announce(ctx, 'sales/cancel-invite', getRow<InviteRow>(ctx, 'sales_invites', inv.id, 'invitation'));
+};
+
+const listInvitesOp: Op<'sales/list-invites'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.memberManage));
+  const now = ctx.now();
+  const page = pageRows<InviteRow>(ctx, 'sales_invites', [], [], input);
+  return { ...page, entries: page.entries.map((r) => effective(r, now)) };
 };
 
 const listMembersOp: Op<'sales/list-members'> = async (ctx, input) => {
@@ -1013,6 +1070,9 @@ const bound = operationsFor(salesOperations)({
   'sales/assistant-company': assistantCompanyOp,
   'sales/assistant-today': assistantTodayOp,
   'sales/join': joinOp,
+  'sales/invite-member': inviteMemberOp,
+  'sales/cancel-invite': cancelInviteOp,
+  'sales/list-invites': listInvitesOp,
   'sales/register-member': registerMemberOp,
   'sales/list-members': listMembersOp,
   'sales/create-company': createCompanyOp,

@@ -450,7 +450,7 @@ Vite + React + TypeScript, no router or UI library: hash routes, plain CSS, one 
 - **Layout:** one `<aside className="side">` is a left menu at 900px and up and the top bar below it (`app/src/styles.css`). Settings (`#/settings`, in the
   menu's footer, not the main list) holds Appearance and the Team list. The look and light/dark are a personal preference kept in
   localStorage (`app/src/theme.ts`, applied before first paint by `initTheme()` in `main.tsx`): three Substrat themes (Ledger, Standard = Web Awesome's
-  base, Atelier) and `wa-dark` from "match my device" / light / dark. Managing the team (inviting) is **proposed, not built** (`spec/concept.md`, section 7).
+  base, Atelier) and `wa-dark` from "match my device" / light / dark. Team management is built: see **Team invitations** below.
 - **Screens:** Today, Companies (+ detail: contacts, opportunities, interactions, timeline), Pipeline,
   Import (CSV, flagged rows, duplicate review), Do not contact, Knowledge, Audit.
 - **What a caller sees follows `sales/my-permissions`** (`useCan(key)`): admin-only nav and buttons are
@@ -515,3 +515,22 @@ host**, and `src/assistant-model.ts` picks the model (`@substrat-run/model-provi
   recovery path for a worker stopped mid-turn. `assistant-host.ts` is written against `ScopeStub` so it moves as is.
 - **Tests:** `test/assistant.test.ts` (engine, tools, isolation) and `test/assistant-host.test.ts` (the loop against a
   scripted model: grounding, no personal data shown to the model, not-configured, model failure, owner-only).
+
+## Team invitations (Settings → Team)
+
+Admins (`member:manage`) invite people from Settings. This is the **sign-in door's member invites** (`@substrat-run/vertical-auth`), not
+`engine-invites`: only the identity directory can mint the principal a brand-new person needs, which is why `podcasts` uses
+`engine-invites` on its local server but the directory's invitations on its hosted worker. `devMemberInvites` runs the same
+invitations locally, so one path serves both. (Weighed in `spec/concept.md`, section 7.)
+
+- **The door makes the invitation; the vertical only records it.** `POST /api/member-invites { email, roleKey }` (and
+  `/:principal/withdraw`) are mounted by the worker's `workerDoor({ invites })` and by `members.mount(...)` in `src/server.ts`. The
+  door mints the invited principal, refuses an invite to a role the inviter does not hold, and admits the person by the address their
+  issuer verified (no link, no email). It then calls our `sales/invite-member` / `sales/cancel-invite` AS THE INVITER, which write
+  `sales_invites` (migration `0002-invites`) so the screen can show them. Neither grants anything.
+- **Arrival.** `sales/join` (the door's `join`, and `server.ts` locally on a person's first request) settles an open invitation whose id is
+  the caller's principal: `status` goes `open` → `arrived`. `list-invites` reads an open invitation past `expires_at` as `expired`.
+- **Roles offered:** `sales-admin` and `sales-member`. **Not in the app:** changing a role or removing a person. Those are platform admin
+  verbs a vertical cannot call; Settings says to use the Substrat dashboard.
+- **Dev:** the persona **Ida** (`ida@substrat.test`) is deliberately not in the seed's `homes`. Invite her, then sign in as Ida to arrive.
+- **Tests:** `test/team.test.ts`.

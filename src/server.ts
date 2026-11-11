@@ -72,7 +72,7 @@ await outbox.drain();
 // each other mounts the routes below, naming the same operations worker.ts names in `workerDoor`.
 // The dev issuer signs in only the people in src/personas.ts. If your people invite each other, add
 // one persona and leave it out of `homes` in seed.ts, so nothing links it; invite it at the `email`
-// its persona carries, and it gets in as it would hosted. This shop has none, as it invites nobody.
+// its persona carries, and it gets in as it would hosted.
 const members = devMemberInvites({
   db: new Database(join(dataDir, 'members.sqlite')),
   host,
@@ -120,28 +120,40 @@ app.get('/api/me', async (c) => {
   return c.json({ principal: caller.principal, display: caller.display });
 });
 
+/** The people already joined in this process, so `sales/join` runs once per person, as the worker's door runs it. */
+const joined = new Set<string>();
+
 async function stub(c: Context): Promise<ScopeStub> {
   const caller = await login.caller(c.req.raw.headers);
   if (!caller) throw new HTTPException(401, { message: 'unauthorized' });
-  return host.getScope(caller.principal, caller.tenantId, caller.scopeId, {
+  const scope = await host.getScope(caller.principal, caller.tenantId, caller.scopeId, {
     verifiedEmail: caller.verifiedEmail,
     ...outbox.kick(caller),
   });
+  // The first time a person reaches the workspace they are recorded as a member (their display name, and the
+  // address their issuer verified), which also settles an invitation they arrived on. The worker's door does
+  // the same through `workerDoor({ join })`; the seed does it for the cast.
+  if (!joined.has(caller.principal)) {
+    await scope.invoke('sales/join', { displayName: caller.display });
+    joined.add(caller.principal);
+  }
+  return scope;
 }
 
-// `POST /api/member-invites` and its withdrawal, for a vertical that invites its people:
-//
-//   members.mount(app, {
-//     login,
-//     scope: stub,
-//     invites: {
-//       roles: ['mechanic', 'front-desk'],
-//       send: (scope, i) => scope.invoke('shop/invite-member', { principal: i.principal, email: i.email, roleKey: i.roleKey }),
-//       cancel: (scope, i) => scope.invoke('shop/cancel-invite', { principal: i.principal }),
-//     },
-//   });
-//
-// This shop invites nobody: its people are added by staff.
+// `POST /api/member-invites` and its withdrawal, the same two routes the worker's door mounts. An invited
+// person gets in by the address the issuer verified: the dev issuer's persona 'Ida' (src/personas.ts) is
+// left out of the seed's `homes`, so inviting ida@substrat.test is how she arrives.
+// (The cast bridges two Hono environment types that are the same at runtime: the dev server has no bindings.)
+members.mount(app as unknown as Hono<{ Bindings: object }>, {
+  login,
+  scope: stub,
+  invites: {
+    roles: ['sales-admin', 'sales-member'],
+    send: (scope, i) =>
+      scope.invoke('sales/invite-member', { principal: i.principal, email: i.email, roleKey: i.roleKey, expiresAt: i.expiresAt }),
+    cancel: (scope, i) => scope.invoke('sales/cancel-invite', { principal: i.principal }),
+  },
+});
 
 // Everything else — including `/api/invoke` and the shared error envelope.
 mountApi(app, stub, async (c, person, threadId) => {

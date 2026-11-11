@@ -156,7 +156,7 @@ function hostFor(env: Env): CloudflareScopeHost {
  * `send` checks who may invite, records the invite for the screens and queues the mail ("sign in
  * with this address"); it must not grant anything to `i.principal`. server.ts names the same three.
  *
- * Sales OS names `join` (below); its people are added by staff, so it names no `invites`.
+ * Sales OS names `join` and `invites` (below): an admin invites people from Settings → Team.
  */
 const door = workerDoor<Env>({
   directory: (env, node) => env.AUTH.get(env.AUTH.idFromName(node.tenantId)),
@@ -166,6 +166,15 @@ const door = workerDoor<Env>({
   // A person is recorded as a member the first time they reach the workspace, so the owner's name shows
   // where they own or change something instead of "someone". The first person in takes the owner seat.
   join: (scope, who) => scope.invoke('sales/join', { displayName: who.display }),
+  // Admins invite people from Settings → Team. The door mints the invited person, enforces that an inviter can
+  // never confer more than they hold, and admits them by the address their issuer verified; these two only
+  // record the invitation (and its withdrawal) so the screen can show it. They grant nothing.
+  invites: {
+    roles: ['sales-admin', 'sales-member'],
+    send: (scope, i) =>
+      scope.invoke('sales/invite-member', { principal: i.principal, email: i.email, roleKey: i.roleKey, expiresAt: i.expiresAt }),
+    cancel: (scope, i) => scope.invoke('sales/cancel-invite', { principal: i.principal }),
+  },
 });
 
 /** The caller's scope stub. 401 if nobody. */
