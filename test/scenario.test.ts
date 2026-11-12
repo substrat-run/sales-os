@@ -202,7 +202,7 @@ describe('sales-os scenario', () => {
     expect(edited).toMatchObject({ status: 'draft', approved_by: null });
   });
 
-  it('6. work an opportunity: a call is logged, stages cannot be skipped, lost needs a reason', async () => {
+  it('6. work an opportunity: a call is logged, any move is allowed, lost needs a reason', async () => {
     const opp = await nora.invoke<OpportunityRow>('sales/create-opportunity', {
       companyId: acmeId,
       title: 'Replace their booking system',
@@ -235,12 +235,14 @@ describe('sales-os scenario', () => {
     });
     expect(generated).toMatchObject({ generated: 1, performed_by_kind: 'agent' });
 
-    await expect(nora.invoke('sales/move-opportunity', { opportunityId, stage: 'won' })).rejects.toThrow(
-      /cannot move from new to won: stages cannot be skipped/,
+    // Any stage to any other: skip ahead, step back, and the same stage is refused.
+    const skipped = await nora.invoke<OpportunityRow>('sales/move-opportunity', { opportunityId, stage: 'proposal' });
+    expect(skipped.stage).toBe('proposal');
+    const back = await nora.invoke<OpportunityRow>('sales/move-opportunity', { opportunityId, stage: 'contacted' });
+    expect(back.stage).toBe('contacted');
+    await expect(nora.invoke('sales/move-opportunity', { opportunityId, stage: 'contacted' })).rejects.toThrow(
+      /already contacted/,
     );
-    // …the control: the next step is open.
-    const moved = await nora.invoke<OpportunityRow>('sales/move-opportunity', { opportunityId, stage: 'contacted' });
-    expect(moved.stage).toBe('contacted');
     await expect(nora.invoke('sales/move-opportunity', { opportunityId, stage: 'lost' })).rejects.toThrow(
       /needs a reason/,
     );
@@ -252,9 +254,9 @@ describe('sales-os scenario', () => {
       lostReason: 'no budget',
     });
     expect(lost).toMatchObject({ stage: 'lost', lost_reason: 'no budget' });
-    await expect(
-      nora.invoke('sales/move-opportunity', { opportunityId: lost.id, stage: 'contacted' }),
-    ).rejects.toThrow(/lost; it cannot move/);
+    // A lost opportunity can be reopened, and the reason goes with it.
+    const reopened = await nora.invoke<OpportunityRow>('sales/move-opportunity', { opportunityId: lost.id, stage: 'contacted' });
+    expect(reopened).toMatchObject({ stage: 'contacted', lost_reason: null });
   });
 
   it('7. opting out: anyone can opt a contact out, only an admin can lift it', async () => {

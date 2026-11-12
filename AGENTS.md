@@ -415,8 +415,7 @@ duplicate review, knowledge base, basic CRM, manual interaction logging, pipelin
 - **Vocabulary:** company, contact, opportunity (several per company), interaction (a customer
   quote is stored apart from the summary; `generated` marks AI content), task, knowledge entry
   (claim label `shipped` / `built_unproven` / `bet`), exclusion, import batch, duplicate candidate.
-- **Opportunity stages:** new → contacted → in_conversation → meeting_held → proposal → won, one
-  step at a time; `lost` from any open stage and needs a reason. `won`/`lost` are terminal.
+- **Opportunity stages:** new → contacted → in_conversation → meeting_held → proposal → won, or `lost` (needs a reason). A move may go to any other stage, back included, and reopens a won/lost one; the same stage is refused. Every move is an event.
 - **Imports never merge silently.** A same-domain row matches; a same-name, different-domain row
   creates the record AND a duplicate candidate; a person decides (`sales/resolve-duplicate`). A
   merge re-points children and marks the loser `merged_into`; nothing is deleted. Raw uploaded

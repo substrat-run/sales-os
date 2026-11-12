@@ -36,14 +36,9 @@ export function Pipeline() {
     draw(o);
     return { update: draw };
   }, [names, members]);
-  const canDrag = useCallback((o: Opportunity) => isOpen(o.stage), []);
-  // One step forward, or lost from any open stage. A reorder inside a column is never refused by the board.
-  const canDrop = useCallback((o: Opportunity, from: string, to: string) => {
-    if (!isOpen(from)) return false;
-    if (to === 'lost') return true;
-    const i = FORWARD.indexOf(from as (typeof FORWARD)[number]);
-    return FORWARD[i + 1] === to;
-  }, []);
+  const canDrag = useCallback((_o: Opportunity) => true, []);
+  // Any stage to any other. A reorder inside a column is never refused by the board.
+  const canDrop = useCallback((_o: Opportunity, _from: string, _to: string) => true, []);
   const move = useCallback(async (m: KanbanMove<Opportunity>) => {
     setFailure(null);
     if (m.from === m.to) return; // The order inside a column is not stored.
@@ -81,7 +76,7 @@ export function Pipeline() {
           mount={mount} canDrag={canDrag} canDrop={canDrop} move={move} onOpen={(o) => setSelected(o.id)} onFailed={onFailed}
         />
       </div>
-      <p className="muted">Drag a card one stage forward, or onto Lost (it asks why). Tab to a card and press Space to move it with the keyboard. Click a card to edit it.</p>
+      <p className="muted">Drag a card to any stage; Lost asks why. Tab to a card and press Space to move it with the keyboard. Click a card to edit it.</p>
       {current && <Detail key={current.id} o={current} onClose={() => setSelected(null)} onDone={q.reload} />}
       {asking && (
         <LostReason onSubmit={(r) => { asking.resolve(r); setAsking(null); }} onCancel={() => { asking.reject(); setAsking(null); }} />

@@ -18,7 +18,7 @@ small team.** It is not a general-purpose CRM and not a marketing suite.
 |---|---|
 | **Today** | The daily queue: overdue tasks, tasks due today, stalled opportunities (no activity for 14 days), and open opportunities with no next step. |
 | **Companies** | A searchable list, and a page per company: contacts (with opt-out), opportunities, every interaction, and a timeline of who changed what and when. |
-| **Pipeline** | Opportunities by stage: `new → contacted → in conversation → meeting held → proposal → won`, or `lost` with a reason. A stage moves one step at a time and cannot be skipped. |
+| **Pipeline** | Opportunities by stage: `new → contacted → in conversation → meeting held → proposal → won`, or `lost` with a reason. A card can be dragged to any stage, back as well as forward, and a won or lost one can be reopened; Lost always asks why. |
 | **Import** | Paste or upload a CSV of companies and contacts. Rows are matched, never silently merged. Anything unclear (a probable duplicate, a missing company, an email already on another company) is flagged for a person. |
 | **Do not contact** | Companies and domains that must never be contacted. An import skips them. |
 | **Knowledge** | The approved source of truth: positioning, capabilities, ICP, pricing, security, FAQs, cases. Every claim is labelled **shipped**, **built but unproven**, or **bet**, and has a source and a date. |

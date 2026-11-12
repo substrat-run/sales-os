@@ -377,7 +377,7 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
     http: { method: 'POST', path: '/opportunities/{opportunityId}/update' },
   },
   'sales/move-opportunity': {
-    summary: 'Move an opportunity one stage forward, or to lost with a reason. Stages cannot be skipped',
+    summary: 'Move an opportunity to any other stage (forward, back or reopened). Lost needs a reason',
     permission: 'crm:write',
     input: z.object({ opportunityId: id, stage: z.enum(STAGES), lostReason: optText }),
     output: E.opportunity.fields,

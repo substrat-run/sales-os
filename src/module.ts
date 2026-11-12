@@ -510,22 +510,13 @@ const updateOpportunityOp: Op<'sales/update-opportunity'> = async (ctx, input) =
   return announce(ctx, 'sales/update-opportunity', getRow<OpportunityRow>(ctx, 'sales_opportunities', o.id, 'opportunity'));
 };
 
-/** The forward path. `lost` is reachable from any open stage and `won` is the end of it. */
-const FORWARD = STAGES.filter((s) => s !== 'lost');
-
 const moveOpportunityOp: Op<'sales/move-opportunity'> = async (ctx, input) => {
   assertAllowed(await ctx.check(SALES_PERM.crmWrite));
   const o = getRow<OpportunityRow>(ctx, 'sales_opportunities', input.opportunityId, 'opportunity');
-  if (o.stage === 'won' || o.stage === 'lost') {
-    throw substratError('conflict', `opportunity is ${o.stage}; it cannot move`);
-  }
-  if (input.stage === 'lost') {
-    if (!input.lostReason) throw substratError('validation_failed', 'a lost opportunity needs a reason');
-  } else {
-    const from = FORWARD.indexOf(o.stage as (typeof FORWARD)[number]);
-    if (FORWARD[from + 1] !== input.stage) {
-      throw substratError('conflict', `cannot move from ${o.stage} to ${input.stage}: stages cannot be skipped`);
-    }
+  // Any stage to any other: forward, back, skipping, and reopening a won or lost one. Only `lost` has a rule.
+  if (o.stage === input.stage) throw substratError('conflict', `opportunity is already ${o.stage}`);
+  if (input.stage === 'lost' && !input.lostReason) {
+    throw substratError('validation_failed', 'a lost opportunity needs a reason');
   }
   ctx.sql.exec('UPDATE sales_opportunities SET stage = ?, lost_reason = ?, updated_at = ? WHERE id = ?', [
     input.stage,

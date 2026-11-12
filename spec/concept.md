@@ -29,7 +29,7 @@ conversation with — moves toward one or more **opportunities** (a specific use
 under discussion). Everything that happens along the way is an **interaction** on a
 **timeline**: an email, a call, a meeting, a note, an edit, or an action by the agent.
 
-**Lifecycle of an opportunity** (steps may not be skipped, and every move is recorded with who
+**Lifecycle of an opportunity** (a move may go to any stage, and every move is recorded with who
 made it and when):
 
 `new → contacted → in conversation → meeting held → proposal → won | lost` (a stalled deal stays
