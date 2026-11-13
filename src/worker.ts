@@ -29,6 +29,7 @@ import {
   type ScopeSweeperDo,
 } from '@substrat-run/adapter-cloudflare';
 import type { ScopeStub } from '@substrat-run/kernel';
+import { resolveBindingTranscriber, type AiBinding } from './transcribe.js';
 import { defaultAttachmentExtractors } from '@substrat-run/attachment-extractors';
 import {
   kickFlags,
@@ -106,6 +107,8 @@ interface Env {
   ALLOW_DEV_NODE?: string;
   /** Shared secret the router presents (how this worker knows the asserted node is real). */
   ROUTER_SECRET?: string;
+  /** Workers AI, if the platform gave this install the binding: how a clip of speech becomes text. No key. */
+  AI?: AiBinding;
   /** Shared secret the platform presents on /internal/* calls. */
   PLATFORM_SECRET?: string;
 }
@@ -215,7 +218,7 @@ door.mount(app);
 // Including `/api/invoke`. Mounted BEFORE the platform surface: Hono keeps only the
 // last-registered `onError`, so the platform's envelope wins for the whole app — which
 // is harmless because both handlers classify through the same `classifyError`.
-mountApi(app, stub);
+mountApi(app, stub, undefined, undefined, (c) => resolveBindingTranscriber((c.env as Env).AI));
 
 // ── /internal/* — the platform-gated management contract ────────────────────
 // The control plane provisions, heals, inspects and restores installs through

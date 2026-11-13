@@ -426,6 +426,14 @@ duplicate review, knowledge base, basic CRM, manual interaction logging, pipelin
   id for `host.attachments(...)`: the local server passes it, the worker does not yet (the routes answer 503 and the screen says so). A scope needs a
   `vertical` and a provisioned blob store for attachments (`provisionWorkspace` in `src/seed.ts`); a data directory seeded before meetings cannot gain one,
   so it has to be reseeded.
+- **Transcripts** (`sales_transcript_segments`, migration `0004`): timed passages on a meeting, read with `crm:read`, saved and corrected with `crm:write`
+  (no new key). The words are customer speech: `text` is `erasable`, no event carries it (`sales.transcript-saved` has a count, `sales.transcript-corrected`
+  the ids), and no assistant tool returns it. The browser (`app/src/live.ts`) cuts the microphone into ~10 s 16 kHz WAV clips and posts each to
+  `POST /api/meetings/{id}/transcribe`, a HOST route in `src/routes.ts` (module code may not call a model) that asks the kernel first
+  (`sales/open-transcription`) and then a `Transcriber` (`src/transcribe.ts`): Whisper large-v3-turbo through `env.AI` on the worker, or Cloudflare's HTTP API
+  with `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_AI_API_TOKEN` locally. Neither present: `GET /api/transcription/status` says why and recording is unaffected.
+  How a deployed vertical is given the `AI` binding is a platform matter not in the 0.195 docs; verify it before relying on the worker. Not Nova-3: its
+  docs do not list Swedish.
 - **Imports never merge silently.** A same-domain row matches; a same-name, different-domain row
   creates the record AND a duplicate candidate; a person decides (`sales/resolve-duplicate`). A
   merge re-points children and marks the loser `merged_into`; nothing is deleted. Raw uploaded

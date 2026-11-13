@@ -38,6 +38,7 @@ export type CompanyRow = Row<'company'>;
 export type ContactRow = Row<'contact'>;
 export type OpportunityRow = Row<'opportunity'>;
 export type MeetingRow = Row<'meeting'>;
+export type TranscriptSegmentRow = Row<'transcript_segment'>;
 export type InteractionRow = Row<'interaction'>;
 export type TaskRow = Row<'task'>;
 export type KnowledgeRow = Row<'knowledge'>;
@@ -665,6 +666,63 @@ const startRecordingOp: Op<'sales/start-recording'> = async (ctx, input) => {
   return { url: link.path, expiresAt: link.expiresAt, maxBytes: link.maxBytes };
 };
 
+// ------------------------------------------------------------ transcripts
+
+/** The clip route asks this before it sends audio to a model: the kernel, not the route, decides who may. */
+const openTranscriptionOp: Op<'sales/open-transcription'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const m = getRow<MeetingRow>(ctx, 'sales_meetings', input.meetingId, 'meeting');
+  if (m.status === 'cancelled') throw substratError('conflict', 'a cancelled meeting cannot be transcribed');
+  return { ok: true as const };
+};
+
+const saveTranscriptOp: Op<'sales/save-transcript'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const m = getRow<MeetingRow>(ctx, 'sales_meetings', input.meetingId, 'meeting');
+  if (input.recordingId) {
+    const have = ctx.sql.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM sales_transcript_segments WHERE meeting_id = ? AND recording_id = ?',
+      [m.id, input.recordingId],
+    )[0]!.n;
+    if (have > 0) throw substratError('conflict', 'this recording already has a transcript');
+  }
+  const now = ctx.now();
+  input.segments.forEach((seg, i) => {
+    ctx.sql.exec(
+      `INSERT INTO sales_transcript_segments
+         (id, meeting_id, recording_id, seq, start_ms, end_ms, text, language, created_by, created_at, corrected_by, corrected_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+      [ulid(), m.id, input.recordingId ?? null, i, seg.startMs, Math.max(seg.endMs, seg.startMs), seg.text, input.language ?? null, ctx.principal, now],
+    );
+  });
+  // The words are customer speech and stay out of the event: it says only that a transcript exists and how long it is.
+  ctx.emit({
+    type: 'sales.transcript-saved',
+    schemaVersion: 1,
+    entity: { entityType: 'meeting', entityId: m.id },
+    piiClass: 'none',
+    payload: { id: m.id, company_id: m.company_id, recording_id: input.recordingId ?? null, segments: input.segments.length },
+  } as Parameters<Ctx['emit']>[0]);
+  return { saved: input.segments.length };
+};
+
+const updateTranscriptSegmentOp: Op<'sales/update-transcript-segment'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const seg = getRow<TranscriptSegmentRow>(ctx, 'sales_transcript_segments', input.segmentId, 'transcript passage');
+  ctx.sql.exec('UPDATE sales_transcript_segments SET text = ?, corrected_by = ?, corrected_at = ? WHERE id = ?', [
+    input.text,
+    ctx.principal,
+    ctx.now(),
+    seg.id,
+  ]);
+  return announce(ctx, 'sales/update-transcript-segment', getRow<TranscriptSegmentRow>(ctx, 'sales_transcript_segments', seg.id, 'transcript passage'));
+};
+
+const listTranscriptOp: Op<'sales/list-transcript'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmRead));
+  return pageRows<TranscriptSegmentRow>(ctx, 'sales_transcript_segments', ['meeting_id = ?'], [input.meetingId], input);
+};
+
 // ----------------------------------------------------------- interactions
 
 const logInteractionOp: Op<'sales/log-interaction'> = async (ctx, input) => {
@@ -1201,6 +1259,10 @@ const bound = operationsFor(salesOperations)({
   'sales/set-meeting-status': setMeetingStatusOp,
   'sales/list-meetings': listMeetingsOp,
   'sales/start-recording': startRecordingOp,
+  'sales/open-transcription': openTranscriptionOp,
+  'sales/save-transcript': saveTranscriptOp,
+  'sales/update-transcript-segment': updateTranscriptSegmentOp,
+  'sales/list-transcript': listTranscriptOp,
   'sales/log-interaction': logInteractionOp,
   'sales/list-interactions': listInteractionsOp,
   'sales/create-task': createTaskOp,

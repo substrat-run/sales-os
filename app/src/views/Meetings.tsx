@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError, get, getAll, getWithEtag, post, qs, uploadAudio, useLoad,
-  type Company, type Meeting, type Opportunity, type Recording, type RecordingLink,
+  type Company, type Meeting, type Opportunity, type Recording, type RecordingLink, type TranscriptSegment,
 } from '../api';
+import { startLive, type Passage } from '../live';
 import { Badge, CompanyLink, ErrorBox, Field, Loading, Section, Who, fmtLocal, useAction } from '../ui';
 
 const statusKind = (s: string) => (s === 'held' ? 'won' : s === 'cancelled' ? 'lost' : '');
@@ -159,7 +160,7 @@ function MeetingDetail({ id }: { id: string }) {
         </Section>
         <EditMeeting key={etag ?? ''} meeting={m} etag={etag} onDone={d.reload} />
       </div>
-      <Recordings meeting={m} />
+      <RecordingsAndTranscript meeting={m} />
     </>
   );
 }
@@ -196,7 +197,53 @@ function EditMeeting({ meeting: m, etag, onDone }: { meeting: Meeting; etag: str
 const fmtSize = (bytes: number) => (bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`);
 const fmtClock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
-function Recordings({ meeting }: { meeting: Meeting }) {
+function RecordingsAndTranscript({ meeting }: { meeting: Meeting }) {
+  const [version, setVersion] = useState(0);
+  return (
+    <>
+      <Recordings meeting={meeting} onSaved={() => setVersion((v) => v + 1)} />
+      <Transcript meetingId={meeting.id} version={version} />
+    </>
+  );
+}
+
+const fmtOffset = (ms: number) => fmtClock(Math.floor(ms / 1000));
+
+function Transcript({ meetingId, version }: { meetingId: string; version: number }) {
+  const q = useLoad(() => getAll<TranscriptSegment>(`/meetings/${meetingId}/transcript`, 4), [meetingId, version]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [text, setText] = useState('');
+  const act = useAction(() => { setEditing(null); q.reload(); });
+  if (!q.data) return <Loading state={q} />;
+  const rows = q.data.slice().sort((a, b) => (a.recording_id ?? '').localeCompare(b.recording_id ?? '') || a.seq - b.seq);
+  return (
+    <Section title={`Transcript (${rows.length})`}>
+      {rows.length ? (
+        <ul className="rows transcript">
+          {rows.map((r) => (
+            <li key={r.id}>
+              <span className="muted stamp">{fmtOffset(r.start_ms)}</span>
+              {editing === r.id ? (
+                <form className="form grow" onSubmit={(e) => { e.preventDefault(); void act.run(() => post(`/transcript/${r.id}/update`, { segmentId: r.id, text })); }}>
+                  <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+                  <div className="actions"><button disabled={act.busy || !text.trim()}>Save</button><button type="button" onClick={() => setEditing(null)}>Cancel</button></div>
+                </form>
+              ) : (
+                <>
+                  <span className="grow">{r.text}{r.corrected_at ? <> <Badge>corrected</Badge></> : null}</span>
+                  <button onClick={() => { setEditing(r.id); setText(r.text); }}>Edit</button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : <p className="muted">No transcript. Tick “transcribe” when recording to make one.</p>}
+      <ErrorBox error={act.error} />
+    </Section>
+  );
+}
+
+function Recordings({ meeting, onSaved }: { meeting: Meeting; onSaved: () => void }) {
   const q = useLoad(async (): Promise<Recording[] | 'unavailable'> => {
     try {
       return await get<Recording[]>(`/meetings/${meeting.id}/recordings`);
@@ -226,7 +273,7 @@ function Recordings({ meeting }: { meeting: Meeting }) {
         </ul>
       ) : <p className="muted">Nothing recorded yet.</p>}
       <ErrorBox error={del.error} />
-      {meeting.status !== 'cancelled' && <Recorder meetingId={meeting.id} onSaved={q.reload} />}
+      {meeting.status !== 'cancelled' && <Recorder meetingId={meeting.id} onSaved={() => { q.reload(); onSaved(); }} />}
     </Section>
   );
 }
@@ -242,7 +289,15 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
   const [phase, setPhase] = useState<Phase>('idle');
   const [seconds, setSeconds] = useState(0);
   const [error, setError] = useState<Error | null>(null);
-  const rec = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[]; bytes: number; link: RecordingLink } | null>(null);
+  const [language, setLanguage] = useState('sv');
+  const [transcribe, setTranscribe] = useState(true);
+  const [passages, setPassages] = useState<Passage[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const rec = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[]; bytes: number; link: RecordingLink; live: { stop: () => Promise<Passage[]> } | null } | null>(null);
+  // Whether this host can make a transcript, so it is offered only where one can be made.
+  const status = useLoad(() => get<{ available: boolean; reason?: string }>('/transcription/status').catch(() => ({ available: false })), []);
+  const canTranscribe = !!status.data?.available;
+  const wantTranscript = canTranscribe && transcribe;
   const supported = typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
 
   useEffect(() => {
@@ -267,7 +322,17 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
         throw e;
       }
       const recorder = new MediaRecorder(stream, { audioBitsPerSecond: 32000, ...(mimeType ? { mimeType } : {}) });
-      const state = { recorder, stream, chunks: [] as Blob[], bytes: 0, link };
+      let live: { stop: () => Promise<Passage[]> } | null = null;
+      setPassages([]);
+      setNotice(null);
+      if (wantTranscript) {
+        try {
+          live = await startLive(stream, { meetingId, language, onPassages: setPassages, onError: (e) => setNotice(`Part of the transcript is missing: ${e.message}`) });
+        } catch {
+          setNotice('Live text could not start in this browser. The meeting is still being recorded.');
+        }
+      }
+      const state = { recorder, stream, chunks: [] as Blob[], bytes: 0, link, live };
       rec.current = state;
       recorder.ondataavailable = (ev) => {
         if (!ev.data.size) return;
@@ -288,11 +353,21 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
   const finish = async (state: NonNullable<typeof rec.current>) => {
     state.stream.getTracks().forEach((t) => t.stop());
     setPhase('saving');
+    let recordingId: string | undefined;
     try {
       const type = state.recorder.mimeType || 'audio/webm';
       const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
-      await uploadAudio(state.link.url, new Blob(state.chunks, { type }), `meeting-${meetingId}.${ext}`);
+      recordingId = (await uploadAudio(state.link.url, new Blob(state.chunks, { type }), `meeting-${meetingId}.${ext}`)).id;
       setConsent(false);
+    } catch (e) {
+      setError(e as Error);
+    }
+    try {
+      // The transcript is kept even if the audio could not be (it is still what was said).
+      const spoken = (await state.live?.stop()) ?? [];
+      if (spoken.length) {
+        await post(`/meetings/${meetingId}/transcript`, { meetingId, ...(recordingId && { recordingId }), language, segments: spoken });
+      }
       onSaved();
     } catch (e) {
       setError(e as Error);
@@ -308,10 +383,24 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
       <h3>Record this meeting</h3>
       {phase === 'idle' && (
         <>
+          {canTranscribe && (
+            <div className="inline">
+              <label className="check"><input type="checkbox" checked={transcribe} onChange={(e) => setTranscribe(e.target.checked)} /> Transcribe</label>
+              <select aria-label="Language" value={language} disabled={!transcribe} onChange={(e) => setLanguage(e.target.value)}>
+                <option value="sv">Swedish</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+          )}
           <label className="check">
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            Everyone on this call has agreed to be recorded
+            {wantTranscript
+              ? 'Everyone on this call has agreed to be recorded and transcribed by a cloud service'
+              : 'Everyone on this call has agreed to be recorded'}
           </label>
+          {status.data && !canTranscribe && (
+            <p className="muted ask-note">{(status.data as { reason?: string }).reason ?? 'Transcription is not available here.'}</p>
+          )}
           <p className="muted ask-note">Records this computer’s microphone. To capture a video call, share that call’s browser tab with sound.</p>
           <button className="primary" disabled={!consent} onClick={() => void start()}>● Record</button>
         </>
@@ -322,6 +411,12 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
           <button onClick={() => rec.current?.recorder.stop()}>■ Stop and save</button>
         </div>
       )}
+      {phase !== 'idle' && wantTranscript && (
+        <div className="live" aria-live="polite">
+          {passages.length ? passages.slice(-6).map((p, i) => <p key={i}><span className="muted stamp">{fmtOffset(p.startMs)}</span> {p.text}</p>) : <p className="muted">Text appears here a few seconds behind the speakers.</p>}
+        </div>
+      )}
+      {notice && <p className="note">{notice}</p>}
       {phase === 'saving' && <p className="muted">Saving the recording…</p>}
       <ErrorBox error={error} />
     </div>

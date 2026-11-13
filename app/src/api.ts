@@ -165,6 +165,10 @@ export interface Meeting {
 export interface Recording {
   id: string; filename: string; contentType: string; size: number; createdBy: string; createdAt: string;
 }
+export interface TranscriptSegment {
+  id: string; meeting_id: string; recording_id: string | null; seq: number; start_ms: number; end_ms: number; text: string;
+  language: string | null; created_by: string; created_at: string; corrected_by: string | null; corrected_at: string | null;
+}
 export interface RecordingLink { url: string; expiresAt: string; maxBytes: number }
 export interface Task {
   id: string; company_id: string | null; opportunity_id: string | null; title: string; due_date: string;
@@ -206,7 +210,7 @@ export const CATEGORIES = ['positioning', 'capability', 'icp', 'pricing', 'colla
 export const CLAIMS = ['shipped', 'built_unproven', 'bet'] as const;
 
 /** Send recorded audio to the single-use link `sales/start-recording` returned. The link is the authority. */
-export async function uploadAudio(url: string, audio: Blob, filename: string): Promise<void> {
+export async function uploadAudio(url: string, audio: Blob, filename: string): Promise<{ id: string }> {
   const res = await fetch(`${url}?filename=${encodeURIComponent(filename)}`, {
     method: 'PUT',
     credentials: 'same-origin',
@@ -217,4 +221,5 @@ export async function uploadAudio(url: string, audio: Blob, filename: string): P
     const why = res.status === 413 ? 'The recording is too large.' : res.status === 410 ? 'The upload link has expired.' : `The upload failed (${res.status}).`;
     throw new ApiError(res.status, why);
   }
+  return (await res.json()) as { id: string };
 }

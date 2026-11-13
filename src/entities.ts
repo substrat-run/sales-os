@@ -112,6 +112,26 @@ export const salesEntities = defineEntities({
     // Who was there is typed by a person and names people.
     erasable: ['attendees'],
   },
+  transcript_segment: {
+    table: 'sales_transcript_segments',
+    fields: z.object({
+      id: z.string(),
+      meeting_id: z.string(),
+      recording_id: z.string().nullable(),
+      seq: z.number(),
+      start_ms: z.number(),
+      end_ms: z.number(),
+      text: z.string(),
+      language: z.string().nullable(),
+      created_by: z.string(),
+      created_at: z.string(),
+      corrected_by: z.string().nullable(),
+      corrected_at: z.string().nullable(),
+    }),
+    key: ['id'],
+    // What was said is customer speech, and names people.
+    erasable: ['text'],
+  },
   interaction: {
     table: 'sales_interactions',
     fields: z.object({

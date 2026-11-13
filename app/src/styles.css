@@ -103,3 +103,9 @@ h3 { margin: 1rem 0 .5rem; }
 .rec-dot { width: .7rem; height: .7rem; border-radius: 50%; background: var(--bad); display: inline-block; animation: rec-pulse 1.2s ease-in-out infinite; }
 @keyframes rec-pulse { 50% { opacity: .25; } }
 audio { max-width: 100%; }
+
+.transcript > li { gap: .75rem; align-items: flex-start; justify-content: flex-start; }
+.transcript .stamp { min-width: 3rem; font-variant-numeric: tabular-nums; }
+.grow { flex: 1; min-width: 0; }
+.live { margin-top: .5rem; padding: .6rem .8rem; border-radius: 6px; background: var(--chip); max-height: 12rem; overflow: auto; }
+.live p { margin: .2rem 0; }

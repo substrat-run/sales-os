@@ -75,6 +75,8 @@ export const salesManifest = moduleManifest.parse({
       { type: 'sales.invite-arrived', schemaVersion: 1 },
       // Emitted by `sales/start-recording`: who confirmed everyone agreed to be recorded, and when.
       { type: 'sales.recording-started', schemaVersion: 1 },
+      // Emitted by `sales/save-transcript`: that a transcript was saved and how long it is. Never the words.
+      { type: 'sales.transcript-saved', schemaVersion: 1 },
     ],
     consumes: [],
   },

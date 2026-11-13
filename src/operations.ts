@@ -504,6 +504,50 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
     http: { method: 'POST', path: '/meetings/{meetingId}/recordings' },
   },
 
+  // ---------------------------------------------------------- transcripts
+  'sales/open-transcription': {
+    summary: 'Check the caller may transcribe this meeting’s audio. The clip route calls it before it sends audio to the model',
+    permission: 'crm:write',
+    input: z.object({ meetingId: id }),
+    output: z.object({ ok: z.literal(true) }),
+  },
+  'sales/save-transcript': {
+    summary: 'Save the transcript of a meeting (or one of its recordings), as timed passages',
+    permission: 'crm:write',
+    input: z.object({
+      meetingId: id,
+      recordingId: optText,
+      language: z.string().min(2).max(8).optional(),
+      segments: z.array(z.object({ startMs: z.number().int().min(0), endMs: z.number().int().min(0), text: z.string().min(1).max(4000) })).min(1).max(5000),
+    }),
+    output: z.object({ saved: z.number() }),
+    // Emits `sales.transcript-saved` itself (the count, never the words), listed in the manifest.
+    http: { method: 'POST', path: '/meetings/{meetingId}/transcript' },
+  },
+  'sales/update-transcript-segment': {
+    summary: 'Correct the wording of one passage of a transcript. The passage is marked as corrected by a person',
+    permission: 'crm:write',
+    input: z.object({ segmentId: id, text: z.string().min(1).max(4000) }),
+    output: E.transcript_segment.fields,
+    emits: {
+      entity: 'transcript_segment',
+      entityIdFrom: 'id',
+      type: 'sales.transcript-corrected',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'meeting_id', 'corrected_by', 'corrected_at'],
+    },
+    http: { method: 'POST', path: '/transcript/{segmentId}/update' },
+  },
+  'sales/list-transcript': {
+    summary: 'The passages of a meeting’s transcript, in the order spoken',
+    permission: 'crm:read',
+    input: z.object({ meetingId: id }),
+    output: E.transcript_segment.fields,
+    paged: { sortKey: 'id' },
+    http: { method: 'GET', path: '/meetings/{meetingId}/transcript' },
+  },
+
   // ------------------------------------------------------- interactions
   'sales/log-interaction': {
     summary: 'Log an email, call, meeting or note. A customer quote is stored apart from the summary',
@@ -810,7 +854,7 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
     summary: 'The full audit trail of one record: payloads, the permission that allowed each change, the grant behind it',
     permission: 'audit:read',
     input: z.object({
-      entityType: z.enum(['company', 'contact', 'opportunity', 'interaction', 'task', 'knowledge', 'exclusion', 'duplicate']),
+      entityType: z.enum(['company', 'contact', 'opportunity', 'interaction', 'task', 'knowledge', 'exclusion', 'duplicate', 'meeting', 'transcript_segment']),
       entityId: id,
     }),
     output: historyEntry,

@@ -19,7 +19,7 @@ small team.** It is not a general-purpose CRM and not a marketing suite.
 | **Today** | The daily queue: overdue tasks, tasks due today, stalled opportunities (no activity for 14 days), and open opportunities with no next step. |
 | **Companies** | A searchable list, and a page per company: contacts (with opt-out), opportunities, every interaction, and a timeline of who changed what and when. |
 | **Pipeline** | Opportunities by stage: `new → contacted → in conversation → meeting held → proposal → won`, or `lost` with a reason. A card can be dragged to any stage, back as well as forward, and a won or lost one can be reopened; Lost always asks why. |
-| **Meetings** | Schedule a meeting with a company (and an opportunity), see the next seven days on Today, and **record the audio in the browser** once you confirm everyone agreed to be recorded. Anyone in the workspace can play a recording back. |
+| **Meetings** | Schedule a meeting with a company (and an opportunity), see the next seven days on Today, and **record the audio in the browser** once you confirm everyone agreed to be recorded, with an optional **live transcript** in Swedish or English (a few seconds behind, corrected by hand if needed). Anyone in the workspace can play a recording back and read the transcript. |
 | **Import** | Paste or upload a CSV of companies and contacts. Rows are matched, never silently merged. Anything unclear (a probable duplicate, a missing company, an email already on another company) is flagged for a person. |
 | **Do not contact** | Companies and domains that must never be contacted. An import skips them. |
 | **Knowledge** | The approved source of truth: positioning, capabilities, ICP, pricing, security, FAQs, cases. Every claim is labelled **shipped**, **built but unproven**, or **bet**, and has a source and a date. |
@@ -58,6 +58,8 @@ locally, set a key before starting the API:
 export ANTHROPIC_API_KEY=sk-ant-...        # required
 export ASSISTANT_MODEL=anthropic:claude-sonnet-5-5   # optional; this is the default
 ```
+
+Transcription needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_AI_API_TOKEN` in the server's environment (Workers AI, Whisper large-v3-turbo). Meeting audio is sent to Cloudflare while a meeting is recorded and transcribed. Without them the recorder says transcription is not set up and still records.
 
 Without a key the Ask tab says the assistant is not set up, and the rest of the app is unaffected.
 
@@ -167,7 +169,7 @@ daily queue, exclusions and opt-outs, the audit trail, edit-conflict protection,
 
 **Not built, by design for now:**
 
-- **Transcripts of recordings.** The audio is stored and played back; turning it into text means sending it to a speech-to-text provider, which is a separate decision. The browser records this computer's microphone only (share a call's tab to capture a video call).
+- **Who said what.** Transcripts have no speaker labels, summaries or searching yet. The browser records this computer's microphone only (share a call's tab to capture a video call).
 - **Recordings on the deployed worker.** Scheduling works there; recording and playback run on the local server first (the worker's sign-in does not yet hand a route the signed-in person it needs).
 - **Phase 2, outreach:** campaigns and sequences, a Gmail connection, reply detection, controlled sending, deliverability.
 - **Phase 3, meetings:** Calendar availability and booking, meeting briefings, transcript capture, quote extraction.

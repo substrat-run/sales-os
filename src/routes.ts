@@ -3,6 +3,7 @@ import { substratError } from '@substrat-run/contracts';
 import type { ScopeAttachments, ScopeStub } from '@substrat-run/kernel';
 import { externalInput, externalJson, mountOperations, problemResponse, type ResolveStub } from '@substrat-run/vertical-host';
 import { assistantRoutes, salesOperations } from './operations.js';
+import type { TranscriberChoice } from './transcribe.js';
 
 /**
  * The Sales OS HTTP API — derived from the declared operations, adapter- and
@@ -51,6 +52,12 @@ export type RunAssistant = (c: Context, person: ScopeStub, threadId: string) => 
  */
 export type ResolveAttachments = (c: Context) => Promise<ScopeAttachments>;
 
+/** Which transcriber this host has, per request (the worker reads its binding off the request's environment). */
+export type ResolveTranscriber = (c: Context) => TranscriberChoice;
+
+/** The longest clip the route accepts: ten seconds of 16 kHz speech is about 320 kB; this leaves room for a long one. */
+export const CLIP_MAX_BYTES = 2 * 1024 * 1024;
+
 /** Every operation that carries a URL. Sales OS composes no engine, so these are its own. */
 const ROUTED = { ...salesOperations, ...assistantRoutes };
 
@@ -60,6 +67,7 @@ export function mountApi(
   resolveStub: ResolveStub,
   runAssistant?: RunAssistant,
   attachments?: ResolveAttachments,
+  transcriber?: ResolveTranscriber,
 ): { operation: string; method: string; path: string }[] {
   /**
    * One error vocabulary, shared with the platform surface: `problemResponse`
@@ -142,6 +150,35 @@ export function mountApi(
     const removed = await (await files(c)).remove(c.req.param('attachmentId'));
     if (!removed) throw substratError('not_found', 'recording not found');
     return c.body(null, 204);
+  });
+
+  // Whether this host can turn speech into text, so the recorder offers a transcript only where one can be made.
+  app.get('/api/transcription/status', async (c) => {
+    await resolveStub(c);
+    const choice = transcriber?.(c);
+    return c.json(choice && 'transcribe' in choice ? { available: true } : { available: false, reason: choice && 'reason' in choice ? choice.reason : 'Transcription is not available on this host yet.' });
+  });
+
+  // One clip of speech in, text out. It holds no data: the audio is passed to the model and dropped. The kernel decides
+  // who may (`sales/open-transcription`, `crm:write`), and a person who may not never reaches the model.
+  app.post('/api/meetings/:meetingId/transcribe', async (c) => {
+    const person = await resolveStub(c);
+    await person.invoke('sales/open-transcription', { meetingId: c.req.param('meetingId') });
+    const choice = transcriber?.(c);
+    if (!choice || !('transcribe' in choice)) {
+      throw substratError('unavailable', choice && 'reason' in choice ? choice.reason : 'Transcription is not available on this host yet.');
+    }
+    const declared = Number(c.req.header('content-length') ?? 0);
+    if (declared > CLIP_MAX_BYTES) throw substratError('validation_failed', 'that clip is too large');
+    const audio = new Uint8Array(await c.req.arrayBuffer());
+    if (audio.length === 0) throw substratError('validation_failed', 'the clip is empty');
+    if (audio.length > CLIP_MAX_BYTES) throw substratError('validation_failed', 'that clip is too large');
+    const language = c.req.query('language');
+    try {
+      return c.json(await choice.transcribe(audio, language === 'sv' || language === 'en' ? language : undefined));
+    } catch {
+      throw substratError('unavailable', 'The transcription service did not answer. Try again.');
+    }
   });
 
   // Returns what it mounted, in registration order — a test pins the complete

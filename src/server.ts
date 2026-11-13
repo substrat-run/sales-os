@@ -14,6 +14,7 @@ import { devLogin, devMemberInvites } from '@substrat-run/dev-issuer';
 import { buildSalesHost, linkDevPersonas, seedSales, type SalesWorld } from './seed.js';
 import { DEV_PROVIDER } from './personas.js';
 import { mountApi } from './routes.js';
+import { resolveLocalTranscriber } from './transcribe.js';
 import { NoTurnWaiting, runAssistantTurn } from './assistant-host.js';
 import { resolveAssistantModel } from './assistant-model.js';
 import { assistantModule } from '@substrat-run/engine-assistant';
@@ -190,7 +191,7 @@ mountApi(app, stub, async (c, person, threadId) => {
   const caller = await login.caller(c.req.raw.headers);
   if (!caller) throw new HTTPException(401, { message: 'unauthorized' });
   return host.attachments(caller.principal, caller.tenantId, caller.scopeId);
-});
+}, () => resolveLocalTranscriber(process.env));
 
 // 8891, not 8873. The `887x`/`527x` block is reserved for this monorepo's own demos
 // (CLAUDE.md, "Commands"), and 8873 is the shop demo's API — so a scaffolded project used

@@ -191,4 +191,24 @@ export const salesMigrations: SqlMigration[] = [
       CREATE INDEX sales_meetings_starts ON sales_meetings(starts_at);
     `,
   },
+  {
+    version: '0004-transcripts',
+    sql: `
+      CREATE TABLE sales_transcript_segments (
+        id           TEXT PRIMARY KEY,
+        meeting_id   TEXT NOT NULL REFERENCES sales_meetings(id),
+        recording_id TEXT,
+        seq          INTEGER NOT NULL,
+        start_ms     INTEGER NOT NULL,
+        end_ms       INTEGER NOT NULL,
+        text         TEXT NOT NULL,
+        language     TEXT,
+        created_by   TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        corrected_by TEXT,
+        corrected_at TEXT
+      );
+      CREATE INDEX sales_transcript_meeting ON sales_transcript_segments(meeting_id, seq);
+    `,
+  },
 ];

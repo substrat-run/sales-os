@@ -162,6 +162,8 @@ so we build the API and tests first, then the screens.
 - 2026-11-11 — Markus approved the team-invitations migration (`0002-invites`: one table, `sales_invites`) and confirmed the permission diff: no new key; `member:manage` (admin only) now also covers inviting, listing and withdrawing invitations.
 - 2026-11-13 — Meetings design (v0.4) approved as written. Build decisions, for the reviewer: (a) the recording is uploaded through the platform's single-use upload link, which caps a file at 25 MiB (not the 200 MiB proposed); the browser records speech at 32 kbit/s, about 0.24 MB a minute, so roughly 100 minutes fit; (b) the consent tick is checked when the link is minted (`sales/start-recording`), and who ticked and when is on the meeting and in the event; (c) playback and removal go through routes that need the signed-in person's id, which the deployed worker's door does not hand a route yet, so recording and playback run on the local server first.
 - 2026-11-13 — Markus approved the meetings migration (`0003-meetings`: one table, `sales_meetings`) and confirmed the permission diff: no new key; `crm:read` / `crm:write` cover meetings and recordings, so any member may also delete a recording.
+- 2026-11-13 — Live transcripts (v0.5) approved as written. Build decisions, for the reviewer: (a) Whisper large-v3-turbo on ten-second clips for Swedish and English; (b) the clip route checks `crm:write` through a small operation (`sales/open-transcription`), so the permission check stays the kernel's; (c) saving a transcript twice for one recording is refused rather than duplicated; (d) the deployed worker reads `env.AI` if the platform provides it, and says transcription is not set up if not.
+- 2026-11-13 — Markus approved the transcripts migration (`0004-transcripts`: one table, `sales_transcript_segments`, `text` erasable) and confirmed the permission diff: no new key; `crm:read` reads a transcript, `crm:write` saves, corrects and sends clips for transcription; the words are in no event and no assistant tool; the audit enum now names meetings and transcript passages.
 
 ## 7. Open questions
 
@@ -319,3 +321,38 @@ I recommend **A**. It is the path that actually puts a person into this workspac
 1. Is the consent tick (a person confirms everyone agreed, and it is stored with the file) enough for how you work, or should the meeting's attendees be listed first and recording only allowed once at least one is named?
 2. May any member delete a recording (no new key), or only admins (one new key, `meeting:delete`)?
 3. Do you want transcription as the next step after this, understanding that the audio is then sent to a provider?
+
+### Proposed change (v0.5, approved): live transcripts of recorded meetings
+
+**Status: approved by Markus 2026-11-13 as written, including that meeting audio is processed by Cloudflare while recording and that the Workers AI binding is a platform feature (how a vertical receives it is not in the 0.195 docs; the worker reads `env.AI` if present, the local server uses a Cloudflare API token if set). Building.**
+
+**What a person would see.** While recording a meeting, text appears under the Record button a few seconds behind the speakers, in Swedish or English as spoken. When the recording is stopped and saved, the same text is kept on the meeting as its **transcript**, shown beside the recording with a time against each passage, and everyone in the workspace can read it (as they can hear the recording). Someone can correct a passage's wording afterwards. A meeting with no transcript says so; a recording made before this exists has none.
+
+**How the text is made (and why it is a few seconds behind, not word by word).** Meetings are in Swedish and English, so one model serves both: Whisper large-v3-turbo, a large model that handles both languages well, hosted by Cloudflare. It takes a finished audio clip rather than a live stream, so the browser cuts the microphone into clips of about ten seconds, sends each to our server as it is finished, and the server hands it to the model and returns the text. A word cut by a clip boundary may be misheard; the person can fix it in the transcript. (Cloudflare also offers a true word-by-word model, Nova-3, but its documentation does not say it supports Swedish. It could be added later for English-only meetings.)
+
+**What already exists vs. what is ours.**
+- *Cloudflare provides:* the model. *Substrat provides:* the sign-in, the permission checks, the audit trail, and the saved recording.
+- *Ours:* cutting the microphone into clips, one new route that passes a clip to the model, the transcript table, and the screen. Our server code makes the call to the model, never the part of the app that holds the data (so a slow model cannot hold a database transaction open).
+
+**Where the audio goes.** Each clip is sent to Cloudflare's hosted model while the meeting is recorded. That makes Cloudflare a processor of what customers say. **The consent line is changed to say so**: "Everyone on this call has agreed to be recorded and transcribed by a cloud service." Transcripts are customer speech: like interaction summaries, they are kept out of what the assistant can read and out of every event.
+
+**Who is denied what (permission preview).** **No new permission key.** Reading a transcript is `crm:read` (both roles). Saving or correcting one is `crm:write` (both roles). Nobody outside the workspace can reach any of it, and the clip route requires the same sign-in and `crm:write` check as starting a recording.
+
+**Data we'd store (previews the migration).** One new table, `sales_transcript_segments` (migration `0004`): id, meeting, optionally the recording it came from, order, start and end time within the recording, the text, the language, who saved it and when, and whether a person corrected it. The text is **personal data, marked erasable**.
+
+**Operations.** `sales/save-transcript` (a batch of passages for a meeting), `sales/update-transcript-segment` (a person's correction), `sales/list-transcript` (paged, by meeting). Plus a route `POST /api/meetings/{id}/transcribe` that takes one audio clip and returns text; it holds no data and checks `crm:write` first.
+
+**The scenario the tests will replay.** A member records and saves a transcript; an admin reads it; the other workspace gets nothing for the same ids; a person corrects a passage and the correction is marked; the transcript text appears in no event and no assistant tool result; a clip route without sign-in is refused; the model is replaced by a scripted stand-in, so no test needs a network or an account.
+
+**Out of scope for v1.** Who said what (speaker labels), summaries, action items, pulling out customer quotes, searching across transcripts, word-by-word live text, and transcribing recordings made before this exists.
+
+**Risks and unknowns, honestly.**
+1. **How the deployed worker reaches Cloudflare's models.** You said Substrat exposes it with no key. I cannot find that in the documentation for the version installed (0.195): its model-provider package mentions a Workers AI binding for the hosted platform, but describes no way for a vertical to declare or receive one, and the platform's "model host for verticals" is described as coming next. I need to know how to ask for it before I build, or the deployed worker's transcription will not work.
+2. **Locally there is no such binding.** The local server can only reach the model with a Cloudflare API token held in the environment, or not at all. Without one, the transcript area says transcription is not set up and recording is unaffected, as the assistant does.
+3. **Clip size and cost.** A ten-second clip is small. Cloudflare lists the model at about half a cent per hour of audio; I have not confirmed it.
+4. **Quality is not guaranteed.** Clip boundaries and crosstalk will cost accuracy. The correction step is the guard, not a promise.
+
+**Review questions for the human.**
+1. Is a few seconds' delay acceptable in exchange for Swedish and English quality?
+2. Is it acceptable that meeting audio is processed by Cloudflare while recording, with the consent line saying so?
+3. How does a vertical get the Workers AI binding on Substrat (a doc page, a manifest field, or a platform request)?
