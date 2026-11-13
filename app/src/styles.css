@@ -97,3 +97,9 @@ h3 { margin: 1rem 0 .5rem; }
 .kanban-frame sub-kanban { display: block; height: 100%; --sub-kanban-column-width: 15rem; }
 .modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgb(0 0 0 / .35); z-index: 50; }
 .modal .card { min-width: min(24rem, 92vw); }
+
+/* ---- Meetings: the recorder ---- */
+.recorder { margin-top: 1rem; padding-top: .5rem; border-top: 1px solid var(--line); }
+.rec-dot { width: .7rem; height: .7rem; border-radius: 50%; background: var(--bad); display: inline-block; animation: rec-pulse 1.2s ease-in-out infinite; }
+@keyframes rec-pulse { 50% { opacity: .25; } }
+audio { max-width: 100%; }

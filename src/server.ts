@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
-import { invocationLog } from '@substrat-run/vertical-host';
+import { invocationLog, mountUploadLinkRedeem } from '@substrat-run/vertical-host';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { platformActorId } from '@substrat-run/contracts';
@@ -155,6 +155,17 @@ members.mount(app as unknown as Hono<{ Bindings: object }>, {
   },
 });
 
+// A recording is uploaded to the single-use link `sales/start-recording` minted. The link IS the authority (it was minted
+// by a person who held `crm:write`), so the route needs only which workspace the request is for.
+mountUploadLinkRedeem(app, {
+  host: () => host,
+  node: async (c) => {
+    const caller = await login.caller(c.req.raw.headers);
+    if (!caller) throw new HTTPException(401, { message: 'unauthorized' });
+    return { tenantId: caller.tenantId, scopeId: caller.scopeId };
+  },
+});
+
 // Everything else — including `/api/invoke` and the shared error envelope.
 mountApi(app, stub, async (c, person, threadId) => {
   const caller = await login.caller(c.req.raw.headers);
@@ -174,6 +185,11 @@ mountApi(app, stub, async (c, person, threadId) => {
     if (e instanceof NoTurnWaiting) throw substratError('conflict', e.message);
     throw e;
   }
+}, async (c) => {
+  // Recordings are read and removed AS the signed-in person, so the meeting's own permissions decide.
+  const caller = await login.caller(c.req.raw.headers);
+  if (!caller) throw new HTTPException(401, { message: 'unauthorized' });
+  return host.attachments(caller.principal, caller.tenantId, caller.scopeId);
 });
 
 // 8891, not 8873. The `887x`/`527x` block is reserved for this monorepo's own demos

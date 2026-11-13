@@ -20,7 +20,7 @@ import {
 import { ASSISTANT_PERM } from '@substrat-run/engine-assistant';
 import { STAGES, salesEntities } from './entities.js';
 import { importRow, salesOperations } from './operations.js';
-import { salesManifest, SALES_PERM } from './manifest.js';
+import { salesManifest, SALES_PERM, RECORDING_MAX_BYTES } from './manifest.js';
 import { salesMigrations } from './migrations.js';
 
 // ============================================================================
@@ -37,6 +37,7 @@ type Row<K extends keyof typeof salesEntities> = z.infer<(typeof salesEntities)[
 export type CompanyRow = Row<'company'>;
 export type ContactRow = Row<'contact'>;
 export type OpportunityRow = Row<'opportunity'>;
+export type MeetingRow = Row<'meeting'>;
 export type InteractionRow = Row<'interaction'>;
 export type TaskRow = Row<'task'>;
 export type KnowledgeRow = Row<'knowledge'>;
@@ -544,6 +545,124 @@ const listOpportunitiesOp: Op<'sales/list-opportunities'> = async (ctx, input) =
     params.push(input.ownerId);
   }
   return pageRows<OpportunityRow>(ctx, 'sales_opportunities', where, params, input);
+};
+
+// --------------------------------------------------------------- meetings
+
+const createMeetingOp: Op<'sales/create-meeting'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  getRow<CompanyRow>(ctx, 'sales_companies', input.companyId, 'company');
+  if (input.opportunityId) {
+    const o = getRow<OpportunityRow>(ctx, 'sales_opportunities', input.opportunityId, 'opportunity');
+    if (o.company_id !== input.companyId) throw substratError('validation_failed', 'that opportunity belongs to another company');
+  }
+  const rowId = ulid();
+  const now = ctx.now();
+  ctx.sql.exec(
+    `INSERT INTO sales_meetings
+       (id, company_id, opportunity_id, title, starts_at, duration_min, location, attendees, agenda, status, owner_id,
+        recording_consent_by, recording_consent_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, NULL, NULL, ?, ?)`,
+    [
+      rowId,
+      input.companyId,
+      input.opportunityId ?? null,
+      input.title,
+      input.startsAt,
+      input.durationMin ?? 30,
+      input.location ?? null,
+      input.attendees ?? null,
+      input.agenda ?? null,
+      ctx.principal,
+      now,
+      now,
+    ],
+  );
+  // A meeting is activity: it keeps the company and the deal from reading as stalled.
+  ctx.sql.exec('UPDATE sales_companies SET updated_at = ? WHERE id = ?', [now, input.companyId]);
+  if (input.opportunityId) ctx.sql.exec('UPDATE sales_opportunities SET updated_at = ? WHERE id = ?', [now, input.opportunityId]);
+  return announce(ctx, 'sales/create-meeting', getRow<MeetingRow>(ctx, 'sales_meetings', rowId, 'meeting'));
+};
+
+const updateMeetingOp: Op<'sales/update-meeting'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const m = getRow<MeetingRow>(ctx, 'sales_meetings', input.meetingId, 'meeting');
+  ctx.sql.exec(
+    `UPDATE sales_meetings SET title = ?, starts_at = ?, duration_min = ?, location = ?, attendees = ?, agenda = ?, updated_at = ?
+      WHERE id = ?`,
+    [
+      input.title ?? m.title,
+      input.startsAt ?? m.starts_at,
+      input.durationMin ?? m.duration_min,
+      input.location ?? m.location,
+      input.attendees ?? m.attendees,
+      input.agenda ?? m.agenda,
+      ctx.now(),
+      m.id,
+    ],
+  );
+  return announce(ctx, 'sales/update-meeting', getRow<MeetingRow>(ctx, 'sales_meetings', m.id, 'meeting'));
+};
+
+const setMeetingStatusOp: Op<'sales/set-meeting-status'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const m = getRow<MeetingRow>(ctx, 'sales_meetings', input.meetingId, 'meeting');
+  if (m.status === input.status) throw substratError('conflict', `meeting is already ${m.status}`);
+  if (m.status === 'cancelled' && input.status === 'held') {
+    throw substratError('conflict', 'a cancelled meeting was not held; schedule it again first');
+  }
+  ctx.sql.exec('UPDATE sales_meetings SET status = ?, updated_at = ? WHERE id = ?', [input.status, ctx.now(), m.id]);
+  return announce(ctx, 'sales/set-meeting-status', getRow<MeetingRow>(ctx, 'sales_meetings', m.id, 'meeting'));
+};
+
+const listMeetingsOp: Op<'sales/list-meetings'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmRead));
+  const where: string[] = [];
+  const params: Param[] = [];
+  for (const [clause, v] of [
+    ['company_id = ?', input?.companyId],
+    ['opportunity_id = ?', input?.opportunityId],
+    ['starts_at >= ?', input?.from],
+    ['starts_at < ?', input?.to],
+  ] as const) {
+    if (v) {
+      where.push(clause);
+      params.push(v);
+    }
+  }
+  return pageRows<MeetingRow>(ctx, 'sales_meetings', where, params, input);
+};
+
+/**
+ * Open a recording. The person confirms everyone on the call agreed to be recorded; that confirmation (who, when) is
+ * written on the meeting and announced BEFORE any audio exists, so a recording can never be separated from it. The
+ * link this returns admits ONE audio file to THIS meeting, as the caller, for a few minutes.
+ */
+const startRecordingOp: Op<'sales/start-recording'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  if (input.consent !== true) throw substratError('validation_failed', 'recording needs the confirmation that everyone agreed to be recorded');
+  const m = getRow<MeetingRow>(ctx, 'sales_meetings', input.meetingId, 'meeting');
+  if (m.status === 'cancelled') throw substratError('conflict', 'a cancelled meeting cannot be recorded');
+  const now = ctx.now();
+  ctx.sql.exec('UPDATE sales_meetings SET recording_consent_by = ?, recording_consent_at = ?, updated_at = ? WHERE id = ?', [
+    ctx.principal,
+    now,
+    now,
+    m.id,
+  ]);
+  ctx.emit({
+    type: 'sales.recording-started',
+    schemaVersion: 1,
+    entity: { entityType: 'meeting', entityId: m.id },
+    piiClass: 'none',
+    payload: { id: m.id, company_id: m.company_id, recording_consent_by: ctx.principal, recording_consent_at: now },
+  } as Parameters<Ctx['emit']>[0]);
+  const link = await ctx.attachments.mintUploadUrl({
+    entity: { entityType: 'meeting', entityId: m.id },
+    maxBytes: RECORDING_MAX_BYTES,
+    ttlSeconds: 3600,
+  });
+  return { url: link.path, expiresAt: link.expiresAt, maxBytes: link.maxBytes };
 };
 
 // ----------------------------------------------------------- interactions
@@ -1077,6 +1196,11 @@ const bound = operationsFor(salesOperations)({
   'sales/update-opportunity': updateOpportunityOp,
   'sales/move-opportunity': moveOpportunityOp,
   'sales/list-opportunities': listOpportunitiesOp,
+  'sales/create-meeting': createMeetingOp,
+  'sales/update-meeting': updateMeetingOp,
+  'sales/set-meeting-status': setMeetingStatusOp,
+  'sales/list-meetings': listMeetingsOp,
+  'sales/start-recording': startRecordingOp,
   'sales/log-interaction': logInteractionOp,
   'sales/list-interactions': listInteractionsOp,
   'sales/create-task': createTaskOp,

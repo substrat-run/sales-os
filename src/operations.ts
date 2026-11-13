@@ -4,6 +4,7 @@ import {
   CLAIM_LABELS,
   INTERACTION_KINDS,
   KNOWLEDGE_CATEGORIES,
+  MEETING_STATUSES,
   STAGES,
   salesEntities,
 } from './entities.js';
@@ -408,6 +409,99 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
     output: E.opportunity.fields,
     paged: { sortKey: 'id' },
     http: { method: 'GET', path: '/opportunities' },
+  },
+
+  // ----------------------------------------------------------- meetings
+  'sales/create-meeting': {
+    summary: 'Schedule a meeting with a company, optionally about one opportunity',
+    permission: 'crm:write',
+    input: z.object({
+      companyId: id,
+      opportunityId: optText,
+      title: z.string().min(1),
+      startsAt: z.string().min(16),
+      durationMin: z.number().int().min(5).max(600).optional(),
+      location: optText,
+      attendees: optText,
+      agenda: optText,
+    }),
+    output: E.meeting.fields,
+    emits: {
+      entity: 'meeting',
+      entityIdFrom: 'id',
+      type: 'sales.meeting-scheduled',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'company_id', 'opportunity_id', 'title', 'starts_at', 'status', 'owner_id'],
+    },
+    http: { method: 'POST', path: '/meetings' },
+  },
+  'sales/update-meeting': {
+    summary: 'Change a meeting’s details: title, time, length, place, attendees, agenda',
+    permission: 'crm:write',
+    input: z.object({
+      meetingId: id,
+      title: optText,
+      startsAt: z.string().min(16).optional(),
+      durationMin: z.number().int().min(5).max(600).optional(),
+      location: optText,
+      attendees: optText,
+      agenda: optText,
+    }),
+    output: E.meeting.fields,
+    concurrency: { over: 'meeting', idFrom: 'meetingId' },
+    emits: {
+      entity: 'meeting',
+      entityIdFrom: 'id',
+      type: 'sales.meeting-updated',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'company_id', 'title', 'starts_at', 'status'],
+    },
+    http: { method: 'POST', path: '/meetings/{meetingId}/update' },
+  },
+  'sales/set-meeting-status': {
+    summary: 'Mark a meeting held or cancelled, or schedule a cancelled one again. A cancelled meeting is not held',
+    permission: 'crm:write',
+    input: z.object({ meetingId: id, status: z.enum(MEETING_STATUSES) }),
+    output: E.meeting.fields,
+    emits: {
+      entity: 'meeting',
+      entityIdFrom: 'id',
+      type: 'sales.meeting-status-changed',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'company_id', 'status'],
+    },
+    http: { method: 'POST', path: '/meetings/{meetingId}/status' },
+  },
+  'sales/get-meeting': {
+    summary: 'One meeting. The ETag it answers with is what an edit sends back as If-Match',
+    permission: 'crm:read',
+    derive: 'get',
+    input: z.object({ meetingId: id }),
+    output: E.meeting.fields,
+    concurrency: { over: 'meeting', idFrom: 'meetingId' },
+    http: { method: 'GET', path: '/meetings/{meetingId}' },
+  },
+  'sales/list-meetings': {
+    summary: 'Meetings, optionally for one company or opportunity, or starting within a window',
+    permission: 'crm:read',
+    input: z.object({ companyId: optText, opportunityId: optText, from: optText, to: optText }),
+    inputOptional: true,
+    output: E.meeting.fields,
+    paged: { sortKey: 'id' },
+    http: { method: 'GET', path: '/meetings' },
+  },
+  'sales/start-recording': {
+    summary: 'Confirm everyone agreed to be recorded and get a single-use link the browser uploads the audio to',
+    permission: 'crm:write',
+    // A boolean the handler insists is true, NOT `z.literal(true)`: the route table pins a literal input itself, which would let
+    // a request that never mentioned consent through.
+    input: z.object({ meetingId: id, consent: z.boolean() }),
+    output: z.object({ url: z.string(), expiresAt: z.string(), maxBytes: z.number() }),
+    // Emits `sales.recording-started` itself (its payload is the consent, not the answer), listed in the manifest.
+    http: { method: 'POST', path: '/meetings/{meetingId}/recordings' },
   },
 
   // ------------------------------------------------------- interactions

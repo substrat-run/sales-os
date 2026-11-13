@@ -141,3 +141,6 @@ export const fmtTime = (iso: string) => iso.slice(0, 16).replace('T', ' ');
 export const money = (o: { value_low: string | null; value_high: string | null; currency: string }) =>
   o.value_low || o.value_high ? `${o.value_low ?? '?'}–${o.value_high ?? '?'} ${o.currency}` : '—';
 export const csvSelect = (v: string) => (v === '' ? undefined : v);
+/** A moment in the reader's own time zone: meetings are agreed in local time and stored in UTC. */
+export const fmtLocal = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });

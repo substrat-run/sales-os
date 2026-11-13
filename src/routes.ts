@@ -1,6 +1,6 @@
 import type { Context, Hono } from 'hono';
 import { substratError } from '@substrat-run/contracts';
-import type { ScopeStub } from '@substrat-run/kernel';
+import type { ScopeAttachments, ScopeStub } from '@substrat-run/kernel';
 import { externalInput, externalJson, mountOperations, problemResponse, type ResolveStub } from '@substrat-run/vertical-host';
 import { assistantRoutes, salesOperations } from './operations.js';
 
@@ -44,6 +44,13 @@ export type { ResolveStub };
  */
 export type RunAssistant = (c: Context, person: ScopeStub, threadId: string) => Promise<void>;
 
+/**
+ * The caller's attachment surface (list, open, remove), as that caller. A HOST concern: it needs the signed-in person's id,
+ * which the local server has and the deployed worker's door does not hand a route yet, so the worker leaves it out and the
+ * recording routes say so.
+ */
+export type ResolveAttachments = (c: Context) => Promise<ScopeAttachments>;
+
 /** Every operation that carries a URL. Sales OS composes no engine, so these are its own. */
 const ROUTED = { ...salesOperations, ...assistantRoutes };
 
@@ -52,6 +59,7 @@ export function mountApi(
   app: Hono<any, any, any>,
   resolveStub: ResolveStub,
   runAssistant?: RunAssistant,
+  attachments?: ResolveAttachments,
 ): { operation: string; method: string; path: string }[] {
   /**
    * One error vocabulary, shared with the platform surface: `problemResponse`
@@ -101,6 +109,39 @@ export function mountApi(
     if (!runAssistant) throw substratError('unavailable', 'The assistant is not available on this host yet.');
     await runAssistant(c, person, c.req.param('threadId'));
     return c.json({ ok: true });
+  });
+
+  // A meeting's recordings. Starting one (`POST /api/meetings/{id}/recordings`, derived from `sales/start-recording`) is
+  // an operation; these three move or remove BYTES, which never ride an operation. Each acts as the caller, so the
+  // meeting's `crm:read` / `crm:write` decide, and each says plainly when this host cannot serve them.
+  const files = async (c: Context): Promise<ScopeAttachments> => {
+    await resolveStub(c); // 401 for nobody, before anything else
+    if (!attachments) throw substratError('unavailable', 'Recordings are not available on this host yet.');
+    return attachments(c);
+  };
+  app.get('/api/meetings/:meetingId/recordings', async (c) => {
+    const list = await (await files(c)).list({ entityType: 'meeting', entityId: c.req.param('meetingId') });
+    return c.json(list);
+  });
+  // Always a download, never run as our origin: audio is played by an <audio> element, which is unaffected.
+  app.get('/api/recordings/:attachmentId', async (c) => {
+    const opened = await (await files(c)).openStream(c.req.param('attachmentId'));
+    if (!opened) throw substratError('not_found', 'recording not found');
+    return new Response(opened.body.stream as unknown as ReadableStream, {
+      headers: {
+        'content-type': opened.contentType,
+        'content-length': String(opened.body.length),
+        'content-disposition': 'attachment',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
+        'cache-control': 'private, no-store',
+      },
+    });
+  });
+  app.delete('/api/recordings/:attachmentId', async (c) => {
+    const removed = await (await files(c)).remove(c.req.param('attachmentId'));
+    if (!removed) throw substratError('not_found', 'recording not found');
+    return c.body(null, 204);
   });
 
   // Returns what it mounted, in registration order — a test pins the complete

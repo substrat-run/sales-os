@@ -160,6 +160,8 @@ so we build the API and tests first, then the screens.
 - 2026-11-11 — Left menu on a desktop (the same markup is the top bar on a narrow screen) and a Settings page built: appearance (three Substrat looks, light / dark / match my device, kept in this browser) and a read-only team list. No permission, table or operation changed. Managing the team (inviting people) is proposed under section 7, awaiting a choice.
 - 2026-11-11 — Team invitations: option A (the sign-in door's member invites) chosen by Markus. Roles offered: Admin and Member; changing a role or removing a person stays in the Substrat dashboard (the proposal's defaults, not separately answered). `engine-invites` was reconsidered after Markus pointed out other apps use it: the `podcasts` app uses it only on its local server and uses the directory invitations when hosted, for the reason recorded in section 7.
 - 2026-11-11 — Markus approved the team-invitations migration (`0002-invites`: one table, `sales_invites`) and confirmed the permission diff: no new key; `member:manage` (admin only) now also covers inviting, listing and withdrawing invitations.
+- 2026-11-13 — Meetings design (v0.4) approved as written. Build decisions, for the reviewer: (a) the recording is uploaded through the platform's single-use upload link, which caps a file at 25 MiB (not the 200 MiB proposed); the browser records speech at 32 kbit/s, about 0.24 MB a minute, so roughly 100 minutes fit; (b) the consent tick is checked when the link is minted (`sales/start-recording`), and who ticked and when is on the meeting and in the event; (c) playback and removal go through routes that need the signed-in person's id, which the deployed worker's door does not hand a route yet, so recording and playback run on the local server first.
+- 2026-11-13 — Markus approved the meetings migration (`0003-meetings`: one table, `sales_meetings`) and confirmed the permission diff: no new key; `crm:read` / `crm:write` cover meetings and recordings, so any member may also delete a recording.
 
 ## 7. Open questions
 
@@ -269,3 +271,51 @@ I recommend **A**. It is the path that actually puts a person into this workspac
 1. A (the door's member invites, recommended) or B (`engine-invites`)?
 2. Are *Admin* and *Member* the right roles to offer?
 3. Is it acceptable that changing a role or removing someone stays in the Substrat dashboard for now?
+
+### Proposed change (v0.4, awaiting approval): meetings you schedule and record
+
+**Status: approved by Markus 2026-11-13 as written (consent tick; any member may delete a recording; transcription later). Building.**
+
+**What a person would see.** A **Meetings** screen (and a Meetings card on each company and opportunity) with *Schedule meeting*: a title, date and time, how long, where (a video link or an address), the company, optionally an opportunity, who is attending, and an agenda. A meeting is *Scheduled*, then *Held* or *Cancelled*. Meetings in the next seven days show on **Today**. On a meeting, a **Record** button asks the browser for the microphone, shows a running timer, and on *Stop* uploads the audio and saves it on that meeting. Anyone in the workspace can play it back, and can see who recorded it and when. A meeting can have several recordings (a call that was dropped and restarted).
+
+**Before recording starts, the person must tick "Everyone on this call has agreed to be recorded".** The tick, who made it and when are kept with the recording. Recording people without telling them is unlawful in many places, so the button is disabled until it is ticked.
+
+**What already exists vs. what is ours.**
+- *Substrat provides:* files hung on a record (attachments): the audio is stored in the workspace's own file store, tied to the meeting, checked by the meeting's permission, with a fingerprint so a damaged file is refused, and an entry in the audit trail for every upload and removal. The platform ships no upload page, so ours is a route we mount ourselves (size limit and accepted types are ours to set).
+- *Ours:* the meeting table and its screens, the Record button (the browser's `MediaRecorder`), the upload route, the consent note, and the Today card.
+- *Not used:* Booking engine (it books slots against someone's availability; we only note a time that was agreed elsewhere). That stays a Phase 3 question, together with Google Calendar.
+
+**Who is denied what (the permission preview).** **No new permission key.** Meetings follow the CRM keys already in place:
+
+| Action | Key | Held by |
+|---|---|---|
+| See meetings, play recordings | `crm:read` | `sales-admin`, `sales-member` |
+| Schedule, edit, hold or cancel a meeting; record; upload | `crm:write` | `sales-admin`, `sales-member` |
+
+- *Who can hear a recording?* Everyone in the workspace (your answer). Nobody outside it: each workspace is its own database and its own file store, and a person from another workspace is told the meeting does not exist.
+- *Who can delete a recording?* The platform uses one key for both uploading and removing, so with no new key, **a member can remove a recording** as well as add one. The removal is in the audit trail. If you would rather only admins can delete, that is one new key (`meeting:delete`) and a permission diff; see question 2.
+- *Who can see the money?* Unchanged.
+
+**Data we'd store (previews the migration).** One new table, `sales_meetings` (migration `0003-meetings`): id, company, optional opportunity, title, starts at, length in minutes, where, attendees (names as typed, **personal data, marked erasable**), agenda, status (scheduled / held / cancelled), owner, created and updated times. The recordings are not in our table: they are attachments on the meeting, so they need no migration. The consent is stored in the attachment's own record (a note "consent given by X at Y") and in the meeting's event, so it cannot be separated from the file.
+
+**Operations.** `sales/create-meeting`, `sales/update-meeting` (carries the version it read, like the other edits), `sales/set-meeting-status`, `sales/get-meeting`, `sales/list-meetings` (paged; filter by company, opportunity, upcoming). Every one announces itself, so the company timeline shows *meeting scheduled / held / cancelled*. Routes for uploading, listing and playing a recording are mounted beside them on both the dev server and the deployed worker.
+
+**The scenario the tests will replay.** Nora schedules a meeting for a company and an opportunity; Markus sees it; a recording is uploaded and played back identical; a file too large or not audio is refused; an upload without the consent tick is refused; a meeting cannot move to *held* from *cancelled* without being rescheduled; Rex (the other workspace) gets nothing for the same ids; the Today card lists meetings within seven days and not older ones.
+
+**Out of scope for v1.**
+- **Transcripts and summaries.** Turning audio into text means sending the recording to a speech-to-text provider, which is a new subprocessor of what customers say. Worth doing, but a separate decision (see question 3).
+- Google Calendar or Outlook invites, joining the call, recording a call someone else hosts (the browser records this computer's microphone only; **it does not capture the other side of a Zoom or Meet call**).
+- Retention rules (automatic deletion after N days).
+- Sharing a recording outside the workspace.
+
+**Risks and unknowns, honestly.**
+1. *What gets recorded.* A browser can record the microphone, or the audio of a shared tab if the person picks "share tab audio". It cannot reach into Zoom. For an in-person meeting, or a call on speaker, the microphone is right; for a video call the person must share the call's tab. The first version records the microphone and says so on the button.
+2. *A long meeting is a large file.* About 0.5 MB a minute in the browser's usual format: a one-hour meeting is about 30 MB. Proposed cap: 200 MB per recording and audio types only.
+3. *If the browser closes mid-recording, the audio is lost.* Proposed: upload in 1-minute chunks is **not** in v1; the recording is uploaded when you press Stop.
+4. *Deployed worker.* Attachments need the workspace's file store on the Cloudflare side. I have not yet checked that this app's worker has one declared; local development uses the local store. If it needs configuring, deployment of the recording part waits on that, as the assistant's loop does.
+5. *Audio is personal data of people who never signed in.* Erasing a person should remove their recordings; today erasure of attachments is a manual removal, not automatic.
+
+**Review questions for the human.**
+1. Is the consent tick (a person confirms everyone agreed, and it is stored with the file) enough for how you work, or should the meeting's attendees be listed first and recording only allowed once at least one is named?
+2. May any member delete a recording (no new key), or only admins (one new key, `meeting:delete`)?
+3. Do you want transcription as the next step after this, understanding that the audio is then sent to a provider?

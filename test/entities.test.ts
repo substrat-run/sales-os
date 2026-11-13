@@ -40,7 +40,7 @@ describe('the registry agrees with the migration journal', () => {
 
   it('parsed the journal at all', () => {
     // A comparison that silently parsed nothing would pass everything under it.
-    expect(journal.size).toBe(12);
+    expect(journal.size).toBe(13);
     expect(journal.get('sales_companies')?.size).toBeGreaterThan(1);
   });
 

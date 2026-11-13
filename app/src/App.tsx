@@ -7,6 +7,7 @@ import { dropHeldClaim, redeemHeldClaim, takeClaimFromUrl } from './claim';
 import { Today } from './views/Today';
 import { Companies, CompanyDetail } from './views/Companies';
 import { Pipeline } from './views/Pipeline';
+import { MeetingsView } from './views/Meetings';
 import { ImportView, Exclusions } from './views/Import';
 import { KnowledgeView } from './views/Knowledge';
 import { Settings } from './views/Settings';
@@ -43,6 +44,7 @@ const NAV: [string, string, string | null][] = [
   ['today', 'Today', null],
   ['companies', 'Companies', null],
   ['pipeline', 'Pipeline', null],
+  ['meetings', 'Meetings', null],
   ['import', 'Import', 'import:run'],
   ['exclusions', 'Do not contact', null],
   ['knowledge', 'Knowledge', null],
@@ -180,6 +182,7 @@ function Shell({ me, route }: { me: Me; route: string[] }) {
           {section === 'today' && <Today />}
           {section === 'companies' && (id ? <CompanyDetail id={id} /> : <Companies />)}
           {section === 'pipeline' && <Pipeline />}
+          {section === 'meetings' && <MeetingsView id={id} />}
           {section === 'import' && (can.has('import:run') ? <ImportView /> : <p className="note denied">Importing is for admins.</p>)}
           {section === 'exclusions' && (<><h1>Do not contact</h1><Exclusions /></>)}
           {section === 'knowledge' && <KnowledgeView />}

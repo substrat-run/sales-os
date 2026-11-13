@@ -15,6 +15,9 @@ import { SqliteScopeHost } from '@substrat-run/adapter-sqlite';
 import { defaultAttachmentExtractors } from '@substrat-run/attachment-extractors';
 import { ENTITLEMENT_KEYS, MODULES, OWNER_ROLE_KEY, permissions, ROLES } from './provision.js';
 
+/** The vertical's slug: what a scope that runs it is stamped with, and what its blob store is provisioned under. */
+export const VERTICAL_SLUG = 'sales-os';
+
 // The provisioning surface (modules, roles, grant shapes) lives in provision.ts —
 // node-free so the worker bundles it and `substrat push` reads it.
 export { ENTITY_GRANTS, MODULES, permissions, ROLES } from './provision.js';
@@ -63,7 +66,9 @@ async function provisionWorkspace(
   for (const key of ENTITLEMENT_KEYS) {
     await host.admin.grantEntitlement(staff, input.tenantId, key);
   }
-  await host.provisionScope(staff, { tenantId: input.tenantId, scopeId: input.scopeId, jurisdiction: 'global' });
+  // The scope runs THIS vertical, which is what gives its attachments (a meeting's recordings) a blob store.
+  await host.provisionScope(staff, { tenantId: input.tenantId, scopeId: input.scopeId, jurisdiction: 'global', vertical: VERTICAL_SLUG });
+  await host.provisionBlobStore(staff, { tenantId: input.tenantId, vertical: VERTICAL_SLUG, binding: 'ATTACHMENTS' });
   await host.admin.activateScope(staff, input.tenantId, input.scopeId);
   for (const role of ROLES) await host.admin.defineRole(staff, input.tenantId, role);
   await host.admin.assignRole(staff, {

@@ -19,6 +19,7 @@ small team.** It is not a general-purpose CRM and not a marketing suite.
 | **Today** | The daily queue: overdue tasks, tasks due today, stalled opportunities (no activity for 14 days), and open opportunities with no next step. |
 | **Companies** | A searchable list, and a page per company: contacts (with opt-out), opportunities, every interaction, and a timeline of who changed what and when. |
 | **Pipeline** | Opportunities by stage: `new → contacted → in conversation → meeting held → proposal → won`, or `lost` with a reason. A card can be dragged to any stage, back as well as forward, and a won or lost one can be reopened; Lost always asks why. |
+| **Meetings** | Schedule a meeting with a company (and an opportunity), see the next seven days on Today, and **record the audio in the browser** once you confirm everyone agreed to be recorded. Anyone in the workspace can play a recording back. |
 | **Import** | Paste or upload a CSV of companies and contacts. Rows are matched, never silently merged. Anything unclear (a probable duplicate, a missing company, an email already on another company) is flagged for a person. |
 | **Do not contact** | Companies and domains that must never be contacted. An import skips them. |
 | **Knowledge** | The approved source of truth: positioning, capabilities, ICP, pricing, security, FAQs, cases. Every claim is labelled **shipped**, **built but unproven**, or **bet**, and has a source and a date. |
@@ -74,6 +75,7 @@ There are two roles, and no prospect or customer ever signs in.
 | Write, approve and retire knowledge entries | ✔ | – |
 | Lift an exclusion or an opt-out | ✔ | – |
 | Read the full audit trail | ✔ | – |
+| Schedule and edit meetings, record and play back audio, delete a recording | ✔ | ✔ |
 | Invite people to the workspace, and withdraw an invitation | ✔ | – |
 
 Opportunity value ranges are visible to both roles. Each workspace is its own isolated database: there is no way to
@@ -165,6 +167,8 @@ daily queue, exclusions and opt-outs, the audit trail, edit-conflict protection,
 
 **Not built, by design for now:**
 
+- **Transcripts of recordings.** The audio is stored and played back; turning it into text means sending it to a speech-to-text provider, which is a separate decision. The browser records this computer's microphone only (share a call's tab to capture a video call).
+- **Recordings on the deployed worker.** Scheduling works there; recording and playback run on the local server first (the worker's sign-in does not yet hand a route the signed-in person it needs).
 - **Phase 2, outreach:** campaigns and sequences, a Gmail connection, reply detection, controlled sending, deliverability.
 - **Phase 3, meetings:** Calendar availability and booking, meeting briefings, transcript capture, quote extraction.
 - **Phase 4, prioritisation:** relationship-aware scoring and account research.

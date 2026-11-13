@@ -14,6 +14,9 @@ import { salesOperations } from './operations.js';
 // spine are the kernel's.
 // ============================================================================
 
+/** The most one recording may hold. The platform's own ceiling for an upload link is 25 MiB. */
+export const RECORDING_MAX_BYTES = 25 * 1024 * 1024 - 1;
+
 /** The vertical's own permission keys. */
 export const SALES_PERM = {
   crmRead: permissionKey.parse('crm:read'),
@@ -70,11 +73,22 @@ export const salesManifest = moduleManifest.parse({
       { type: 'sales.duplicate-flagged', schemaVersion: 1 },
       // Emitted by `sales/join` when a person arrives on an open invitation.
       { type: 'sales.invite-arrived', schemaVersion: 1 },
+      // Emitted by `sales/start-recording`: who confirmed everyone agreed to be recorded, and when.
+      { type: 'sales.recording-started', schemaVersion: 1 },
     ],
     consumes: [],
   },
   migrations: { journalDir: './migrations', compatibleFrom: '0.0.1' },
-  attachmentTargets: [],
+  // A meeting's recordings: audio hung on the meeting, read and written with the CRM keys. Uploaded through a
+  // single-use link (`sales/start-recording` mints it), which the platform caps at 25 MiB and speech-sized audio.
+  attachmentTargets: [
+    {
+      entityType: 'meeting',
+      readPermission: 'crm:read',
+      writePermission: 'crm:write',
+      uploadLinks: { maxBytes: RECORDING_MAX_BYTES, contentTypes: ['audio/*'] },
+    },
+  ],
   entityRelations: [],
   envSpec: SALES_ENV,
   entitlementKey: 'sales-os',

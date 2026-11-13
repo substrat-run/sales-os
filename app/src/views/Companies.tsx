@@ -3,6 +3,7 @@ import {
   get, getAll, getWithEtag, post, qs, readPage, stageLabel, useLoad,
   type Company, type Contact, type HistoryEntry, type Interaction, type Opportunity, type TimelineEntry,
 } from '../api';
+import { CompanyMeetings } from './Meetings';
 import { EntityTable, type ColumnSpec, type TableSource } from '../elements';
 import { Actor, Badge, ErrorBox, Field, Loading, Section, Who, fmtDate, fmtTime, money, useAction, useCan, useMemberNames } from '../ui';
 
@@ -103,6 +104,7 @@ export function CompanyDetail({ id }: { id: string }) {
         <ContactsSection company={company} contacts={contacts} onDone={refresh} />
       </div>
       <OpportunitiesSection company={company} opportunities={opportunities} onDone={refresh} />
+      <CompanyMeetings company={company} version={inter.data?.length ?? 0} />
       <InteractionsSection company={company} contacts={contacts} opportunities={opportunities} items={inter.data ?? []} onDone={refresh} />
       <TimelineSection id={id} version={inter.data?.length ?? 0} />
     </>

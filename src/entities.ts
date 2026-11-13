@@ -29,6 +29,7 @@ export const KNOWLEDGE_CATEGORIES = [
   'case',
   'relationship',
 ] as const;
+export const MEETING_STATUSES = ['scheduled', 'held', 'cancelled'] as const;
 export const INTERACTION_KINDS = ['email', 'call', 'meeting', 'note'] as const;
 
 export const salesEntities = defineEntities({
@@ -86,6 +87,30 @@ export const salesEntities = defineEntities({
       updated_at: z.string(),
     }),
     key: ['id'],
+  },
+  meeting: {
+    table: 'sales_meetings',
+    fields: z.object({
+      id: z.string(),
+      company_id: z.string(),
+      opportunity_id: z.string().nullable(),
+      title: z.string(),
+      starts_at: z.string(),
+      duration_min: z.number(),
+      location: z.string().nullable(),
+      attendees: z.string().nullable(),
+      agenda: z.string().nullable(),
+      status: z.string(),
+      owner_id: z.string().nullable(),
+      // Who confirmed that everyone on the call agreed to be recorded, and when (the latest recording).
+      recording_consent_by: z.string().nullable(),
+      recording_consent_at: z.string().nullable(),
+      created_at: z.string(),
+      updated_at: z.string(),
+    }),
+    key: ['id'],
+    // Who was there is typed by a person and names people.
+    erasable: ['attendees'],
   },
   interaction: {
     table: 'sales_interactions',

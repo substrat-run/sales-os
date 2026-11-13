@@ -167,4 +167,28 @@ export const salesMigrations: SqlMigration[] = [
       CREATE INDEX sales_invites_email ON sales_invites(email);
     `,
   },
+  {
+    version: '0003-meetings',
+    sql: `
+      CREATE TABLE sales_meetings (
+        id                   TEXT PRIMARY KEY,
+        company_id           TEXT NOT NULL REFERENCES sales_companies(id),
+        opportunity_id       TEXT REFERENCES sales_opportunities(id),
+        title                TEXT NOT NULL,
+        starts_at            TEXT NOT NULL,
+        duration_min         INTEGER NOT NULL DEFAULT 30,
+        location             TEXT,
+        attendees            TEXT,
+        agenda               TEXT,
+        status               TEXT NOT NULL DEFAULT 'scheduled',
+        owner_id             TEXT,
+        recording_consent_by TEXT,
+        recording_consent_at TEXT,
+        created_at           TEXT NOT NULL,
+        updated_at           TEXT NOT NULL
+      );
+      CREATE INDEX sales_meetings_company ON sales_meetings(company_id);
+      CREATE INDEX sales_meetings_starts ON sales_meetings(starts_at);
+    `,
+  },
 ];

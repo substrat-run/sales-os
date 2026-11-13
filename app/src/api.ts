@@ -157,6 +157,15 @@ export interface Interaction {
   direction: string | null; summary: string; customer_quote: string | null; generated: number;
   performed_by_kind: string; performed_by: string; occurred_at: string; created_at: string;
 }
+export interface Meeting {
+  id: string; company_id: string; opportunity_id: string | null; title: string; starts_at: string; duration_min: number;
+  location: string | null; attendees: string | null; agenda: string | null; status: string; owner_id: string | null;
+  recording_consent_by: string | null; recording_consent_at: string | null; created_at: string; updated_at: string;
+}
+export interface Recording {
+  id: string; filename: string; contentType: string; size: number; createdBy: string; createdAt: string;
+}
+export interface RecordingLink { url: string; expiresAt: string; maxBytes: number }
 export interface Task {
   id: string; company_id: string | null; opportunity_id: string | null; title: string; due_date: string;
   owner_id: string | null; done_at: string | null; created_at: string;
@@ -195,3 +204,17 @@ export const STAGES = ['new', 'contacted', 'in_conversation', 'meeting_held', 'p
 export const stageLabel = (s: string) => s.replace(/_/g, ' ');
 export const CATEGORIES = ['positioning', 'capability', 'icp', 'pricing', 'collateral', 'security', 'faq', 'case', 'relationship'] as const;
 export const CLAIMS = ['shipped', 'built_unproven', 'bet'] as const;
+
+/** Send recorded audio to the single-use link `sales/start-recording` returned. The link is the authority. */
+export async function uploadAudio(url: string, audio: Blob, filename: string): Promise<void> {
+  const res = await fetch(`${url}?filename=${encodeURIComponent(filename)}`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'content-type': audio.type.split(';')[0] || 'audio/webm' },
+    body: audio,
+  });
+  if (!res.ok) {
+    const why = res.status === 413 ? 'The recording is too large.' : res.status === 410 ? 'The upload link has expired.' : `The upload failed (${res.status}).`;
+    throw new ApiError(res.status, why);
+  }
+}

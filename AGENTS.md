@@ -416,6 +416,16 @@ duplicate review, knowledge base, basic CRM, manual interaction logging, pipelin
   quote is stored apart from the summary; `generated` marks AI content), task, knowledge entry
   (claim label `shipped` / `built_unproven` / `bet`), exclusion, import batch, duplicate candidate.
 - **Opportunity stages:** new → contacted → in_conversation → meeting_held → proposal → won, or `lost` (needs a reason). A move may go to any other stage, back included, and reopens a won/lost one; the same stage is refused. Every move is an event.
+- **Meetings** (`sales_meetings`, migration `0003`) are scheduled against a company and optionally an opportunity (`scheduled` → `held` / `cancelled`;
+  a cancelled meeting is not held until scheduled again). **Recordings are attachments on the meeting** (`attachmentTargets` in the manifest, read by
+  `crm:read`, written by `crm:write`; no new permission key, so any member can also delete one). The browser records the microphone, and uploads through
+  the platform's single-use upload link that `sales/start-recording` mints (capped at 25 MiB, `audio/*` only; the recorder uses 32 kbit/s). **Consent is
+  checked when the link is minted**: `consent` is an explicit boolean the handler insists is `true`, NOT `z.literal(true)` (the route table pins a literal
+  input itself, which let a request that never mentioned consent through). Who ticked and when is on the meeting and in `sales.recording-started`.
+  Listing, playing and deleting go through `/api/meetings/{id}/recordings` and `/api/recordings/{id}` in `src/routes.ts`, which need the signed-in person's
+  id for `host.attachments(...)`: the local server passes it, the worker does not yet (the routes answer 503 and the screen says so). A scope needs a
+  `vertical` and a provisioned blob store for attachments (`provisionWorkspace` in `src/seed.ts`); a data directory seeded before meetings cannot gain one,
+  so it has to be reseeded.
 - **Imports never merge silently.** A same-domain row matches; a same-name, different-domain row
   creates the record AND a duplicate candidate; a person decides (`sales/resolve-duplicate`). A
   merge re-points children and marks the loser `merged_into`; nothing is deleted. Raw uploaded
