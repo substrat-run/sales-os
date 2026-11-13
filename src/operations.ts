@@ -87,6 +87,15 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
     output: z.object({ permissions: z.array(z.string()) }),
     http: { method: 'GET', path: '/my-permissions' },
   },
+  'sales/whoami': {
+    summary: 'The caller’s own principal id, which the worker needs to ask the file store for a recording AS that person',
+    // No permission gates this: it returns the caller's own id, which the kernel put on the stub. No http: a route calls it.
+    narrows: {
+      reason: 'a caller learns only their own id, which the kernel stamped on the stub that asked',
+      checks: [],
+    },
+    output: z.object({ principal: z.string() }),
+  },
 
   // ------------------------------------------------- the assistant's tools
   // Read-only, run AS THE PERSON ASKING (the host calls them on that person's stub), gated by the same

@@ -239,6 +239,8 @@ const myPermissionsOp: Op<'sales/my-permissions'> = async (ctx) => {
   return { permissions: held };
 };
 
+const whoamiOp: Op<'sales/whoami'> = async (ctx) => ({ principal: ctx.principal });
+
 // ---------------------------------------------------------------- members
 
 const registerMemberOp: Op<'sales/register-member'> = async (ctx, input) => {
@@ -1233,6 +1235,7 @@ const auditOp: Op<'sales/audit'> = async (ctx, input) => {
 
 const bound = operationsFor(salesOperations)({
   'sales/my-permissions': myPermissionsOp,
+  'sales/whoami': whoamiOp,
   'sales/assistant-find-knowledge': assistantFindKnowledgeOp,
   'sales/assistant-find-companies': assistantFindCompaniesOp,
   'sales/assistant-company': assistantCompanyOp,

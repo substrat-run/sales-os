@@ -20,7 +20,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { scopeId, tenantId, type ScopeId, type TenantId } from '@substrat-run/contracts';
+import { scopeId, tenantId, type PrincipalId, type ScopeId, type TenantId } from '@substrat-run/contracts';
 import {
   CloudflareScopeHost,
   defineScopeDO,
@@ -218,7 +218,19 @@ door.mount(app);
 // Including `/api/invoke`. Mounted BEFORE the platform surface: Hono keeps only the
 // last-registered `onError`, so the platform's envelope wins for the whole app — which
 // is harmless because both handlers classify through the same `classifyError`.
-mountApi(app, stub, undefined, undefined, (c) => resolveBindingTranscriber((c.env as Env).AI));
+mountApi(
+  app,
+  stub,
+  undefined,
+  // Recordings are read and removed AS the signed-in person. The door hands a route their stub but not their id, and the
+  // file store wants the id, so the stub is asked ("sales/whoami": the kernel's own record of who it acts as), never the browser.
+  async (c) => {
+    const { principal } = await (await stub(c)).invoke<{ principal: string }>('sales/whoami');
+    const node = nodeFor(c.req.raw, c.env as Env);
+    return hostFor(c.env as Env).attachments(principal as PrincipalId, node.tenantId, node.scopeId);
+  },
+  (c) => resolveBindingTranscriber((c.env as Env).AI),
+);
 
 // ── /internal/* — the platform-gated management contract ────────────────────
 // The control plane provisions, heals, inspects and restores installs through
