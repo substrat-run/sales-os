@@ -20,7 +20,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { scopeId, tenantId, type PrincipalId, type ScopeId, type TenantId } from '@substrat-run/contracts';
+import { scopeId, tenantId, type ScopeId, type TenantId } from '@substrat-run/contracts';
 import {
   CloudflareScopeHost,
   defineScopeDO,
@@ -222,13 +222,9 @@ mountApi(
   app,
   stub,
   undefined,
-  // Recordings are read and removed AS the signed-in person. The door hands a route their stub but not their id, and the
-  // file store wants the id, so the stub is asked ("sales/whoami": the kernel's own record of who it acts as), never the browser.
-  async (c) => {
-    const { principal } = await (await stub(c)).invoke<{ principal: string }>('sales/whoami');
-    const node = nodeFor(c.req.raw, c.env as Env);
-    return hostFor(c.env as Env).attachments(principal as PrincipalId, node.tenantId, node.scopeId);
-  },
+  // Recordings are read and removed AS the signed-in person: the door mints the file surface from the session, as it
+  // does the stub, so this route never names whose files it reads.
+  (c) => door.attachments(c),
   (c) => resolveBindingTranscriber((c.env as Env).AI),
 );
 

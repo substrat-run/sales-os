@@ -158,12 +158,4 @@ describe('meetings and their recordings', () => {
     expect(await mine.remove(before[0]!.id)).toMatchObject({ id: before[0]!.id });
     expect((await mine.list({ entityType: 'meeting', entityId: meeting.id })).map((a) => a.id)).not.toContain(before[0]!.id);
   });
-  it('whoami answers with the caller’s own id, so the worker can ask the file store as them, and never anyone else’s', async () => {
-    expect((await markus.invoke<{ principal: string }>('sales/whoami')).principal).toBe(w.markus);
-    expect((await nora.invoke<{ principal: string }>('sales/whoami')).principal).toBe(w.nora);
-    expect((await rex.invoke<{ principal: string }>('sales/whoami')).principal).toBe(w.rex);
-    // …and an id obtained that way reaches only what that person may read: the other workspace sees no recordings.
-    const theirs = await host.attachments(w.rex, w.t2, w.s2);
-    expect(await theirs.list({ entityType: 'meeting', entityId: meeting.id })).toEqual([]);
-  });
 });
