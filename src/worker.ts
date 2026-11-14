@@ -37,6 +37,7 @@ import {
   readRoutedNode,
   RouterAssertionError,
   invocationLog,
+  mountUploadLinkRedeem,
 } from '@substrat-run/vertical-host';
 import { IdentityDO, workerDoor } from '@substrat-run/vertical-host/worker-door';
 // Only from provision.ts, the file `substrat push` reads: so this worker fits any vertical whose
@@ -213,6 +214,14 @@ app.use(
 // Sign-in: the login round-trip at `/api/auth/*`, who is signed in at `/api/me`, and the owner
 // seat at `/api/claim-owner`. Accounts and passwords live at the issuer, not here.
 door.mount(app);
+
+// A recording is uploaded to the single-use link `sales/start-recording` minted. The link IS the authority (a person who held
+// `crm:write` minted it), so the route needs only which workspace the request is for. server.ts mounts the same route; without it
+// here the deployed app answers the upload with a 404.
+mountUploadLinkRedeem(app, {
+  host: (c) => hostFor(c.env),
+  node: (c) => nodeFor(c.req.raw, c.env),
+});
 
 // ── The vertical's API — the SAME table `server.ts` mounts (src/routes.ts) ───
 // Including `/api/invoke`. Mounted BEFORE the platform surface: Hono keeps only the
