@@ -5,6 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@10.10.0",
   "substrat": {
+    "usesModels": true,
     "permissions": "src/provision.ts",
     "runtimeNeeds": {
       "entry": "src/worker.ts",
