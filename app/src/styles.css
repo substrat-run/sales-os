@@ -109,3 +109,9 @@ audio { max-width: 100%; }
 .grow { flex: 1; min-width: 0; }
 .live { margin-top: .5rem; padding: .6rem .8rem; border-radius: 6px; background: var(--chip); max-height: 12rem; overflow: auto; }
 .live p { margin: .2rem 0; }
+
+/* ---- Transcript versions and speakers ---- */
+.speakers { display: flex; flex-wrap: wrap; gap: .4rem; margin: .4rem 0; align-items: center; }
+.chip { border-radius: 999px; padding: .15rem .6rem; background: var(--chip); border: 1px solid var(--line); cursor: pointer; }
+.again { margin-top: 1rem; padding-top: .5rem; border-top: 1px solid var(--line); }
+.notes-list { list-style: none; padding: 0; margin: .5rem 0; }

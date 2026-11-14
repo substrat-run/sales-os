@@ -18,7 +18,7 @@ import {
   operationsFor,
 } from '@substrat-run/kernel';
 import { ASSISTANT_PERM } from '@substrat-run/engine-assistant';
-import { STAGES, salesEntities } from './entities.js';
+import { MAX_RUNS_PER_RECORDING, STAGES, salesEntities } from './entities.js';
 import { importRow, salesOperations } from './operations.js';
 import { salesManifest, SALES_PERM, RECORDING_MAX_BYTES } from './manifest.js';
 import { salesMigrations } from './migrations.js';
@@ -39,6 +39,8 @@ export type ContactRow = Row<'contact'>;
 export type OpportunityRow = Row<'opportunity'>;
 export type MeetingRow = Row<'meeting'>;
 export type TranscriptSegmentRow = Row<'transcript_segment'>;
+export type TranscriptRunRow = Row<'transcript_run'>;
+export type TranscriptSpeakerRow = Row<'transcript_speaker'>;
 export type InteractionRow = Row<'interaction'>;
 export type TaskRow = Row<'task'>;
 export type KnowledgeRow = Row<'knowledge'>;
@@ -676,34 +678,158 @@ const openTranscriptionOp: Op<'sales/open-transcription'> = async (ctx, input) =
   return { ok: true as const };
 };
 
+/** The run shown for a recording, if one is chosen. `IS` compares a missing recording as equal. */
+function hasCurrentRun(ctx: Ctx, meetingId: string, recordingId: string | null): boolean {
+  return (
+    ctx.sql.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM sales_transcript_runs WHERE meeting_id = ? AND recording_id IS ? AND is_current = 1',
+      [meetingId, recordingId],
+    )[0]!.n > 0
+  );
+}
+
+function insertPassages(
+  ctx: Ctx,
+  run: { id: string; meetingId: string; recordingId: string | null; language: string | null },
+  segments: { startMs: number; endMs: number; text: string; speaker?: number | undefined }[],
+): void {
+  const now = ctx.now();
+  segments.forEach((seg, i) => {
+    ctx.sql.exec(
+      `INSERT INTO sales_transcript_segments
+         (id, meeting_id, recording_id, seq, start_ms, end_ms, text, language, created_by, created_at, corrected_by, corrected_at, run_id, speaker)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [ulid(), run.meetingId, run.recordingId, i, seg.startMs, Math.max(seg.endMs, seg.startMs), seg.text, run.language, ctx.principal, now, run.id, seg.speaker ?? null],
+    );
+  });
+}
+
 const saveTranscriptOp: Op<'sales/save-transcript'> = async (ctx, input) => {
   assertAllowed(await ctx.check(SALES_PERM.crmWrite));
   const m = getRow<MeetingRow>(ctx, 'sales_meetings', input.meetingId, 'meeting');
   if (input.recordingId) {
+    // A live transcript is saved once per recording; a LATER version of it is a run, started and finished apart.
     const have = ctx.sql.query<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM sales_transcript_segments WHERE meeting_id = ? AND recording_id = ?',
+      `SELECT COUNT(*) AS n FROM sales_transcript_segments
+        WHERE meeting_id = ? AND recording_id = ?
+          AND (run_id IS NULL OR run_id IN (SELECT id FROM sales_transcript_runs WHERE source = 'live'))`,
       [m.id, input.recordingId],
     )[0]!.n;
     if (have > 0) throw substratError('conflict', 'this recording already has a transcript');
   }
   const now = ctx.now();
-  input.segments.forEach((seg, i) => {
-    ctx.sql.exec(
-      `INSERT INTO sales_transcript_segments
-         (id, meeting_id, recording_id, seq, start_ms, end_ms, text, language, created_by, created_at, corrected_by, corrected_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
-      [ulid(), m.id, input.recordingId ?? null, i, seg.startMs, Math.max(seg.endMs, seg.startMs), seg.text, input.language ?? null, ctx.principal, now],
-    );
-  });
+  const runId = ulid();
+  const recordingId = input.recordingId ?? null;
+  ctx.sql.exec(
+    `INSERT INTO sales_transcript_runs
+       (id, meeting_id, recording_id, model, language, diarize, source, status, is_current, segment_count, failure, created_by, created_at, finished_at)
+     VALUES (?, ?, ?, ?, ?, 0, 'live', 'done', ?, ?, NULL, ?, ?, ?)`,
+    [runId, m.id, recordingId, input.model ?? 'whisper', input.language ?? null, hasCurrentRun(ctx, m.id, recordingId) ? 0 : 1, input.segments.length, ctx.principal, now, now],
+  );
+  insertPassages(ctx, { id: runId, meetingId: m.id, recordingId, language: input.language ?? null }, input.segments);
   // The words are customer speech and stay out of the event: it says only that a transcript exists and how long it is.
   ctx.emit({
     type: 'sales.transcript-saved',
     schemaVersion: 1,
     entity: { entityType: 'meeting', entityId: m.id },
     piiClass: 'none',
-    payload: { id: m.id, company_id: m.company_id, recording_id: input.recordingId ?? null, segments: input.segments.length },
+    payload: { id: m.id, company_id: m.company_id, recording_id: recordingId, run_id: runId, segments: input.segments.length },
   } as Parameters<Ctx['emit']>[0]);
-  return { saved: input.segments.length };
+  return { saved: input.segments.length, runId };
+};
+
+/** A run stuck at 'running' for this long is treated as dead (a host that stopped mid-run), so it never blocks a retry. */
+const RUN_STALE_AFTER = '-15 minutes';
+
+const startTranscriptRunOp: Op<'sales/start-transcript-run'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  // The person confirms who will process the audio for THIS model; the boolean is checked here, not in the route table.
+  if (input.consent !== true) throw substratError('validation_failed', 'confirm that everyone on the recording agreed to it being transcribed by the chosen service');
+  const m = getRow<MeetingRow>(ctx, 'sales_meetings', input.meetingId, 'meeting');
+  if (m.status === 'cancelled') throw substratError('conflict', 'a cancelled meeting cannot be transcribed');
+  const count = ctx.sql.query<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM sales_transcript_runs WHERE meeting_id = ? AND recording_id = ?',
+    [m.id, input.recordingId],
+  )[0]!.n;
+  if (count >= MAX_RUNS_PER_RECORDING) throw substratError('conflict', `this recording has reached ${MAX_RUNS_PER_RECORDING} transcripts`);
+  const running = ctx.sql.query<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM sales_transcript_runs
+      WHERE meeting_id = ? AND recording_id = ? AND status = 'running'
+        AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', ?, '${RUN_STALE_AFTER}')`,
+    [m.id, input.recordingId, ctx.now()],
+  )[0]!.n;
+  if (running > 0) throw substratError('conflict', 'this recording is already being transcribed');
+  const rowId = ulid();
+  ctx.sql.exec(
+    `INSERT INTO sales_transcript_runs
+       (id, meeting_id, recording_id, model, language, diarize, source, status, is_current, segment_count, failure, created_by, created_at, finished_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'again', 'running', 0, 0, NULL, ?, ?, NULL)`,
+    [rowId, m.id, input.recordingId, input.model, input.language ?? null, input.diarize ? 1 : 0, ctx.principal, ctx.now()],
+  );
+  return announce(ctx, 'sales/start-transcript-run', getRow<TranscriptRunRow>(ctx, 'sales_transcript_runs', rowId, 'transcript run'));
+};
+
+function openRun(ctx: Ctx, runId: string): TranscriptRunRow {
+  const run = getRow<TranscriptRunRow>(ctx, 'sales_transcript_runs', runId, 'transcript run');
+  if (run.status !== 'running') throw substratError('conflict', 'this transcript run is already closed');
+  // Only the person who started it closes it: the host does so on their stub, straight after the model answers.
+  if (run.created_by !== ctx.principal) throw substratError('conflict', 'this transcript run was started by someone else');
+  return run;
+}
+
+const finishTranscriptRunOp: Op<'sales/finish-transcript-run'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const run = openRun(ctx, input.runId);
+  const language = input.language ?? run.language;
+  insertPassages(ctx, { id: run.id, meetingId: run.meeting_id, recordingId: run.recording_id, language }, input.segments);
+  // A new version is shown at once only when nothing is chosen yet for the recording; a person switches it otherwise.
+  const makeCurrent = hasCurrentRun(ctx, run.meeting_id, run.recording_id) ? 0 : 1;
+  ctx.sql.exec(
+    `UPDATE sales_transcript_runs SET status = 'done', language = ?, segment_count = ?, is_current = ?, finished_at = ? WHERE id = ?`,
+    [language, input.segments.length, makeCurrent, ctx.now(), run.id],
+  );
+  return announce(ctx, 'sales/finish-transcript-run', getRow<TranscriptRunRow>(ctx, 'sales_transcript_runs', run.id, 'transcript run'));
+};
+
+const failTranscriptRunOp: Op<'sales/fail-transcript-run'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const run = openRun(ctx, input.runId);
+  ctx.sql.exec(`UPDATE sales_transcript_runs SET status = 'failed', failure = ?, finished_at = ? WHERE id = ?`, [input.reason, ctx.now(), run.id]);
+  return announce(ctx, 'sales/fail-transcript-run', getRow<TranscriptRunRow>(ctx, 'sales_transcript_runs', run.id, 'transcript run'));
+};
+
+const listTranscriptRunsOp: Op<'sales/list-transcript-runs'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmRead));
+  return pageRows<TranscriptRunRow>(ctx, 'sales_transcript_runs', ['meeting_id = ?'], [input.meetingId], input);
+};
+
+const setCurrentTranscriptRunOp: Op<'sales/set-current-transcript-run'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const run = getRow<TranscriptRunRow>(ctx, 'sales_transcript_runs', input.runId, 'transcript run');
+  if (run.status !== 'done') throw substratError('conflict', 'only a finished transcript can be the one shown');
+  ctx.sql.exec('UPDATE sales_transcript_runs SET is_current = 0 WHERE meeting_id = ? AND recording_id IS ?', [run.meeting_id, run.recording_id]);
+  ctx.sql.exec('UPDATE sales_transcript_runs SET is_current = 1 WHERE id = ?', [run.id]);
+  return announce(ctx, 'sales/set-current-transcript-run', getRow<TranscriptRunRow>(ctx, 'sales_transcript_runs', run.id, 'transcript run'));
+};
+
+const renameTranscriptSpeakerOp: Op<'sales/rename-transcript-speaker'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmWrite));
+  const run = getRow<TranscriptRunRow>(ctx, 'sales_transcript_runs', input.runId, 'transcript run');
+  const now = ctx.now();
+  const existing = ctx.sql.query<TranscriptSpeakerRow>('SELECT * FROM sales_transcript_speakers WHERE run_id = ? AND number = ?', [run.id, input.number])[0];
+  let rowId = existing?.id;
+  if (existing) {
+    ctx.sql.exec('UPDATE sales_transcript_speakers SET name = ?, updated_by = ?, updated_at = ? WHERE id = ?', [input.name, ctx.principal, now, existing.id]);
+  } else {
+    rowId = ulid();
+    ctx.sql.exec('INSERT INTO sales_transcript_speakers (id, run_id, number, name, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [rowId, run.id, input.number, input.name, ctx.principal, now]);
+  }
+  return announce(ctx, 'sales/rename-transcript-speaker', getRow<TranscriptSpeakerRow>(ctx, 'sales_transcript_speakers', rowId!, 'speaker'));
+};
+
+const listTranscriptSpeakersOp: Op<'sales/list-transcript-speakers'> = async (ctx, input) => {
+  assertAllowed(await ctx.check(SALES_PERM.crmRead));
+  return pageRows<TranscriptSpeakerRow>(ctx, 'sales_transcript_speakers', ['run_id = ?'], [input.runId], input);
 };
 
 const updateTranscriptSegmentOp: Op<'sales/update-transcript-segment'> = async (ctx, input) => {
@@ -720,7 +846,17 @@ const updateTranscriptSegmentOp: Op<'sales/update-transcript-segment'> = async (
 
 const listTranscriptOp: Op<'sales/list-transcript'> = async (ctx, input) => {
   assertAllowed(await ctx.check(SALES_PERM.crmRead));
-  return pageRows<TranscriptSegmentRow>(ctx, 'sales_transcript_segments', ['meeting_id = ?'], [input.meetingId], input);
+  if (input.runId) {
+    return pageRows<TranscriptSegmentRow>(ctx, 'sales_transcript_segments', ['meeting_id = ?', 'run_id = ?'], [input.meetingId, input.runId], input);
+  }
+  // The version chosen for each recording, and any passage saved before versions existed.
+  return pageRows<TranscriptSegmentRow>(
+    ctx,
+    'sales_transcript_segments',
+    ['meeting_id = ?', '(run_id IS NULL OR run_id IN (SELECT id FROM sales_transcript_runs WHERE meeting_id = ? AND is_current = 1))'],
+    [input.meetingId, input.meetingId],
+    input,
+  );
 };
 
 // ----------------------------------------------------------- interactions
@@ -1263,6 +1399,13 @@ const bound = operationsFor(salesOperations)({
   'sales/save-transcript': saveTranscriptOp,
   'sales/update-transcript-segment': updateTranscriptSegmentOp,
   'sales/list-transcript': listTranscriptOp,
+  'sales/start-transcript-run': startTranscriptRunOp,
+  'sales/finish-transcript-run': finishTranscriptRunOp,
+  'sales/fail-transcript-run': failTranscriptRunOp,
+  'sales/list-transcript-runs': listTranscriptRunsOp,
+  'sales/set-current-transcript-run': setCurrentTranscriptRunOp,
+  'sales/rename-transcript-speaker': renameTranscriptSpeakerOp,
+  'sales/list-transcript-speakers': listTranscriptSpeakersOp,
   'sales/log-interaction': logInteractionOp,
   'sales/list-interactions': listInteractionsOp,
   'sales/create-task': createTaskOp,

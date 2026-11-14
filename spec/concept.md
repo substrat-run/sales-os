@@ -164,6 +164,7 @@ so we build the API and tests first, then the screens.
 - 2026-11-13 — Markus approved the meetings migration (`0003-meetings`: one table, `sales_meetings`) and confirmed the permission diff: no new key; `crm:read` / `crm:write` cover meetings and recordings, so any member may also delete a recording.
 - 2026-11-13 — Live transcripts (v0.5) approved as written. Build decisions, for the reviewer: (a) Whisper large-v3-turbo on ten-second clips for Swedish and English; (b) the clip route checks `crm:write` through a small operation (`sales/open-transcription`), so the permission check stays the kernel's; (c) saving a transcript twice for one recording is refused rather than duplicated; (d) the deployed worker reads `env.AI` if the platform provides it, and says transcription is not set up if not.
 - 2026-11-13 — Markus approved the transcripts migration (`0004-transcripts`: one table, `sales_transcript_segments`, `text` erasable) and confirmed the permission diff: no new key; `crm:read` reads a transcript, `crm:write` saves, corrects and sends clips for transcription; the words are in no event and no assistant tool; the audit enum now names meetings and transcript passages.
+- 2026-11-14 — Markus approved the transcript-versions migration (`0005-transcript-runs`: `sales_transcript_runs`, `sales_transcript_speakers`, and `run_id` + `speaker` on the passages; speaker `name` erasable) and confirmed the permission diff: no new key; `crm:read` reads versions and speaker names, `crm:write` starts, finishes or fails a run, switches the version shown, renames a speaker and corrects passages; cost is bounded by five runs per recording, not by a permission; events carry ids, model keys and counts, never words or names. Correction to the design text: Whisper's list price is $0.000513 a minute, about 3 cents an hour, not 1.
 
 ## 7. Open questions
 
@@ -408,3 +409,52 @@ No existing table changes.
 2. Is it right that dictated notes keep only the text, not the audio?
 3. Is the list of what the model sees (above) the one you approve, or should anything be removed (contact job titles, last-interaction dates)?
 4. Is ten suggestions per note, and only tasks and meetings, the right limit for v1?
+
+### Proposed change (v0.7, approved): choose the transcription model, and transcribe again afterwards
+
+**Status: approved by Markus 2026-11-14 as written (Whisper large-v3-turbo and Grok STT in the first list; any member may transcribe again; every version is kept; consent re-confirmed in the panel when the provider changes; five runs per recording, a failed run counting toward it unless the review answers otherwise). v0.6 (notes) is approved and paused; this change touches the same transcript tables, so it is built first. Building.**
+
+**What a person would see.**
+- *While recording:* a dropdown next to the Transcribe tick lists the models, each with a plain line under it ("Whisper: Swedish and English, no speaker labels, about 3 cents an hour", "Grok STT: labels speakers, about 10 cents an hour") and who processes the audio. The consent line follows the choice ("…recorded and transcribed by Cloudflare" or "…by Cloudflare and xAI").
+- *Afterwards, on a meeting with a recording:* a **Transcribe again** button opens a small panel: pick the recording (if there are several), the model, the language (Swedish, English, or auto), and "label who is speaking" where the model can. It shows the length and an approximate price before you confirm. When it finishes, the new transcript appears as a new **version**.
+- *Versions:* the transcript area gets a version picker: "Live, Whisper, 14 Nov 10:12" / "Grok STT, 14 Nov 11:40". One is **current** (the one shown by default and the one other parts of the app use); anyone can switch which is current. Corrections people made stay with the version they were made on. A model that labels speakers shows "Speaker 1 / Speaker 2" against each passage, and a person can rename a speaker once for the whole version ("Speaker 1 → Anna").
+- A failed run says so in a plain sentence, leaves the earlier transcript as it was, and can be tried again.
+
+**What already exists vs. what is ours.**
+- *Cloudflare provides:* the models, behind the `AI` binding the app already asks for (`usesModels`). Grok STT is xAI's model reached through Cloudflare, which lists zero data retention for it.
+- *Already in this app:* recording storage and playback, the transcript passages and their correction, the clip route, the recorder.
+- *Ours (new):* a small list of models and what each can do; a run record; the "transcribe again" route that reads the stored recording and calls the chosen model (module code may not call a model); speaker labels; the screens.
+
+**Where the audio goes, and the consent.** Every model is a processor of what customers say. Whisper runs at Cloudflare. Grok STT runs at xAI, through Cloudflare's gateway: this adds **xAI as a processor of meeting audio**, which you accept by choosing it in the list. The consent tick's text names who processes the audio for the model chosen. Re-running reads the *stored* recording, which was consented to when it was made; the consent line at that time named only the model then in use. **Decision for you:** is that acceptable, or must the person re-confirm consent (with the new model named) every time they transcribe again with a different provider? (This design asks for the re-confirmation, as one tick in the panel.)
+
+**Who is denied what (permission preview).** **No new permission key.** Reading versions and speakers is `crm:read`. Starting a run, switching the current version, renaming a speaker and correcting a passage are `crm:write` (both roles hold it). The route that calls the model asks the kernel first (`sales/start-transcript-run`), so a person who may not never reaches a model. Cost is bounded by a rule, not a permission: **at most five runs per recording**, shown in the panel. Nobody outside the workspace can reach any of it.
+
+**Data we'd store (previews the migration).** Migration `0005-transcript-runs`:
+- New table `sales_transcript_runs`: id, meeting, recording, model key, language, whether speakers were labelled, source (live or again), status (running, done, failed), whether it is the current one, number of passages, who started it and when, when it finished, and a plain-sentence failure reason.
+- New table `sales_transcript_speakers`: id, run, speaker number, the name a person gave.
+- Two new columns on `sales_transcript_segments`: `run_id` and `speaker` (a number, empty when the model does not label). Passages saved before this change keep an empty `run_id` and show as "Earlier transcript".
+No existing data is changed or removed. The text stays **erasable personal data**; the speaker names a person types are erasable too.
+
+**Operations.**
+- `sales/start-transcript-run` (checks the meeting and recording, the five-run limit and the consent tick; creates a *running* run), `sales/finish-transcript-run` (saves the passages and marks it done), `sales/fail-transcript-run` (plain sentence).
+- `sales/list-transcript-runs`, `sales/set-current-transcript-run`, `sales/rename-transcript-speaker`.
+- Changed: `sales/save-transcript` (the live path) now records a *done* run for what it saves, and `sales/list-transcript` takes a version.
+- Host routes (they call a model): `GET /api/transcription/models` (the list, and which are available on this host), `POST /api/meetings/{id}/transcribe-again`; the existing clip route takes the chosen model.
+
+**Events.** Each operation announces itself; events carry ids, the model key, counts and the status, **never the words or a speaker's name**.
+
+**The scenario the tests will replay.** A member records and saves a live transcript (a version); another member transcribes the same recording again with a scripted stand-in that labels two speakers (no network or account); both versions exist and the first is untouched; switching the current version changes what the default read returns; renaming Speaker 1 applies to that version only; a sixth run is refused; a run with a model that is not in the list is refused; a model that fails leaves the earlier transcript current and shows a plain sentence, never the provider's text; the other workspace sees no runs; no event or assistant tool carries any words or names; a run without sign-in is refused.
+
+**Out of scope for v1.** Remembering a person's voice across meetings, naming speakers automatically, comparing two versions side by side, models beyond the two listed, bring-your-own-key, and automatically choosing a model.
+
+**Risks and unknowns, honestly.**
+1. **Long recordings and the model's input limit.** The stored file can be up to 25 MiB (about 100 minutes). Grok STT accepts a file up to 25 MB through the gateway; I have not confirmed Whisper on Workers AI accepts a file that long, and the worker cannot cut audio into pieces (it cannot decode it). If a model cannot take the file, its entry is **disabled for that recording** with the reason, not tried and failed.
+2. **The stored format.** Recordings are WebM/Opus. Grok STT's format list names mp3, wav, ogg, opus, mkv, m4a, flac, aac, mp4 and not WebM. WebM is a Matroska container, so it may work or may need to be labelled `mkv`; I will test this on a real recording before I promise it, and if it fails the recorder would also save a format both can read.
+3. **Swedish and speaker quality are unconfirmed.** Grok STT says it transcribes in any language and lists 25; Swedish is not named, and I have found no independent Swedish speaker-labelling figures. The version picker exists so you can judge on your own meetings.
+4. **Price is approximate.** The panel shows length (estimated from file size at the recorder's bit rate) times the list price, which Cloudflare may change.
+5. **Same binding as before.** Everything here runs only where the app has the `AI` binding (the platform switch for models must be on); otherwise the dropdown says transcription is not set up.
+
+**Review questions for the human.**
+1. Is re-confirming consent in the panel when the provider changes right, or is the original consent enough?
+2. Is five runs per recording the right limit?
+3. Should a failed run count toward the limit?

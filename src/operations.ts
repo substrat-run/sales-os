@@ -6,6 +6,7 @@ import {
   KNOWLEDGE_CATEGORIES,
   MEETING_STATUSES,
   STAGES,
+  TRANSCRIPTION_MODEL_KEYS,
   salesEntities,
 } from './entities.js';
 
@@ -57,6 +58,14 @@ export const importRow = z.object({
 });
 
 const E = salesEntities;
+
+/** One timed passage of a transcript. `speaker` is 1, 2, 3… when the model said who was speaking. */
+const transcriptPassage = z.object({
+  startMs: z.number().int().min(0),
+  endMs: z.number().int().min(0),
+  text: z.string().min(1).max(4000),
+  speaker: z.number().int().min(1).max(50).optional(),
+});
 
 // What the assistant's tools may return. The model provider is a subprocessor of everything it is sent,
 // so these shapes are the whole of what leaves: NO contact names, emails or phones, NO interaction
@@ -512,17 +521,119 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
     output: z.object({ ok: z.literal(true) }),
   },
   'sales/save-transcript': {
-    summary: 'Save the transcript of a meeting (or one of its recordings), as timed passages',
+    summary: 'Save the live transcript of a meeting (or one of its recordings), as timed passages. It is kept as a version',
     permission: 'crm:write',
     input: z.object({
       meetingId: id,
       recordingId: optText,
       language: z.string().min(2).max(8).optional(),
-      segments: z.array(z.object({ startMs: z.number().int().min(0), endMs: z.number().int().min(0), text: z.string().min(1).max(4000) })).min(1).max(5000),
+      model: z.enum(TRANSCRIPTION_MODEL_KEYS).optional(),
+      segments: z.array(transcriptPassage).min(1).max(5000),
     }),
-    output: z.object({ saved: z.number() }),
+    output: z.object({ saved: z.number(), runId: z.string() }),
     // Emits `sales.transcript-saved` itself (the count, never the words), listed in the manifest.
     http: { method: 'POST', path: '/meetings/{meetingId}/transcript' },
+  },
+  'sales/start-transcript-run': {
+    summary: 'Begin transcribing a stored recording again with a chosen model. Checks the consent tick and the limit on runs',
+    permission: 'crm:write',
+    // A boolean the handler insists is true (see `sales/start-recording`): the person confirms who processes the audio.
+    input: z.object({
+      meetingId: id,
+      recordingId: id,
+      model: z.enum(TRANSCRIPTION_MODEL_KEYS),
+      language: z.string().min(2).max(8).optional(),
+      diarize: z.boolean().optional(),
+      consent: z.boolean(),
+    }),
+    output: E.transcript_run.fields,
+    emits: {
+      entity: 'transcript_run',
+      entityIdFrom: 'id',
+      type: 'sales.transcript-run-started',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'meeting_id', 'recording_id', 'model', 'source', 'status'],
+    },
+  },
+  'sales/finish-transcript-run': {
+    summary: 'Save what the model returned for a run that was started, and close the run',
+    permission: 'crm:write',
+    input: z.object({
+      runId: id,
+      language: z.string().min(2).max(8).optional(),
+      segments: z.array(transcriptPassage).min(1).max(5000),
+    }),
+    output: E.transcript_run.fields,
+    emits: {
+      entity: 'transcript_run',
+      entityIdFrom: 'id',
+      type: 'sales.transcript-run-finished',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'meeting_id', 'model', 'status', 'segment_count'],
+    },
+  },
+  'sales/fail-transcript-run': {
+    summary: 'Close a run that did not produce a transcript, with a plain sentence saying so',
+    permission: 'crm:write',
+    input: z.object({ runId: id, reason: z.string().min(1).max(200) }),
+    output: E.transcript_run.fields,
+    emits: {
+      entity: 'transcript_run',
+      entityIdFrom: 'id',
+      type: 'sales.transcript-run-failed',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'meeting_id', 'model', 'status'],
+    },
+  },
+  'sales/list-transcript-runs': {
+    summary: 'The versions of a meeting’s transcript: which model made each, when, and which is current',
+    permission: 'crm:read',
+    input: z.object({ meetingId: id }),
+    output: E.transcript_run.fields,
+    paged: { sortKey: 'id' },
+    http: { method: 'GET', path: '/meetings/{meetingId}/transcript-runs' },
+  },
+  'sales/set-current-transcript-run': {
+    summary: 'Make one finished version the one shown for its recording',
+    permission: 'crm:write',
+    input: z.object({ runId: id }),
+    output: E.transcript_run.fields,
+    emits: {
+      entity: 'transcript_run',
+      entityIdFrom: 'id',
+      type: 'sales.transcript-run-current',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'meeting_id', 'recording_id'],
+    },
+    http: { method: 'POST', path: '/transcript-runs/{runId}/current' },
+  },
+  'sales/rename-transcript-speaker': {
+    summary: 'Give a speaker in one version a name. The name applies to that version only',
+    permission: 'crm:write',
+    input: z.object({ runId: id, number: z.number().int().min(1).max(50), name: z.string().min(1).max(80) }),
+    output: E.transcript_speaker.fields,
+    // The event names the speaker's number, never the name a person typed.
+    emits: {
+      entity: 'transcript_speaker',
+      entityIdFrom: 'id',
+      type: 'sales.transcript-speaker-named',
+      schemaVersion: 1,
+      piiClass: 'none',
+      payload: ['id', 'run_id', 'number'],
+    },
+    http: { method: 'POST', path: '/transcript-runs/{runId}/speakers' },
+  },
+  'sales/list-transcript-speakers': {
+    summary: 'The names given to the speakers of one version',
+    permission: 'crm:read',
+    input: z.object({ runId: id }),
+    output: E.transcript_speaker.fields,
+    paged: { sortKey: 'id' },
+    http: { method: 'GET', path: '/transcript-runs/{runId}/speakers' },
   },
   'sales/update-transcript-segment': {
     summary: 'Correct the wording of one passage of a transcript. The passage is marked as corrected by a person',
@@ -542,7 +653,8 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
   'sales/list-transcript': {
     summary: 'The passages of a meeting’s transcript, in the order spoken',
     permission: 'crm:read',
-    input: z.object({ meetingId: id }),
+    // Without a version: the current one for each recording (and any passage saved before versions).
+    input: z.object({ meetingId: id, runId: optText }),
     output: E.transcript_segment.fields,
     paged: { sortKey: 'id' },
     http: { method: 'GET', path: '/meetings/{meetingId}/transcript' },
@@ -854,7 +966,7 @@ export const salesOperations = defineOperations(E, SALES_PERMISSIONS)({
     summary: 'The full audit trail of one record: payloads, the permission that allowed each change, the grant behind it',
     permission: 'audit:read',
     input: z.object({
-      entityType: z.enum(['company', 'contact', 'opportunity', 'interaction', 'task', 'knowledge', 'exclusion', 'duplicate', 'meeting', 'transcript_segment']),
+      entityType: z.enum(['company', 'contact', 'opportunity', 'interaction', 'task', 'knowledge', 'exclusion', 'duplicate', 'meeting', 'transcript_segment', 'transcript_run', 'transcript_speaker']),
       entityId: id,
     }),
     output: historyEntry,

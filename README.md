@@ -19,7 +19,7 @@ small team.** It is not a general-purpose CRM and not a marketing suite.
 | **Today** | The daily queue: overdue tasks, tasks due today, stalled opportunities (no activity for 14 days), and open opportunities with no next step. |
 | **Companies** | A searchable list, and a page per company: contacts (with opt-out), opportunities, every interaction, and a timeline of who changed what and when. |
 | **Pipeline** | Opportunities by stage: `new → contacted → in conversation → meeting held → proposal → won`, or `lost` with a reason. A card can be dragged to any stage, back as well as forward, and a won or lost one can be reopened; Lost always asks why. |
-| **Meetings** | Schedule a meeting with a company (and an opportunity), see the next seven days on Today, and **record the audio in the browser** once you confirm everyone agreed to be recorded, with an optional **live transcript** in Swedish or English (a few seconds behind, corrected by hand if needed). Anyone in the workspace can play a recording back and read the transcript. |
+| **Meetings** | Schedule a meeting with a company (and an opportunity), see the next seven days on Today, and **record the audio in the browser** once you confirm everyone agreed to be recorded, with an optional **live transcript** in Swedish or English (a few seconds behind, corrected by hand if needed). Pick the speech model, and **transcribe a recording again** with another one (Whisper or Grok STT, which labels who is speaking); every version is kept and one is shown by default. Anyone in the workspace can play a recording back and read the transcript. |
 | **Import** | Paste or upload a CSV of companies and contacts. Rows are matched, never silently merged. Anything unclear (a probable duplicate, a missing company, an email already on another company) is flagged for a person. |
 | **Do not contact** | Companies and domains that must never be contacted. An import skips them. |
 | **Knowledge** | The approved source of truth: positioning, capabilities, ICP, pricing, security, FAQs, cases. Every claim is labelled **shipped**, **built but unproven**, or **bet**, and has a source and a date. |
@@ -59,7 +59,7 @@ export ANTHROPIC_API_KEY=sk-ant-...        # required
 export ASSISTANT_MODEL=anthropic:claude-sonnet-5-5   # optional; this is the default
 ```
 
-Transcription needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_AI_API_TOKEN` in the server's environment (Workers AI, Whisper large-v3-turbo). Meeting audio is sent to Cloudflare while a meeting is recorded and transcribed. Without them the recorder says transcription is not set up and still records.
+Transcription needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_AI_API_TOKEN` in the server's environment (Workers AI: Whisper large-v3-turbo, and xAI's Grok STT through Cloudflare's gateway). Meeting audio is sent to Cloudflare (and to xAI if Grok STT is chosen) while a meeting is recorded and transcribed. On the deployed worker the platform provides the model binding (`usesModels`). Without them the recorder says transcription is not set up and still records.
 
 Without a key the Ask tab says the assistant is not set up, and the rest of the app is unaffected.
 

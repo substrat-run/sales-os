@@ -43,7 +43,7 @@ interface ClipAnswer { text: string; segments: { start: number; end: number; tex
 
 export async function startLive(
   stream: MediaStream,
-  o: { meetingId: string; language: string; onPassages: (p: Passage[]) => void; onError: (e: Error) => void },
+  o: { meetingId: string; language: string; model: string; onPassages: (p: Passage[]) => void; onError: (e: Error) => void },
 ): Promise<{ stop: () => Promise<Passage[]> }> {
   const ctx = new AudioContext({ sampleRate: RATE });
   const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
@@ -63,7 +63,7 @@ export async function startLive(
     if (rms(samples) < SILENCE_RMS) return;
     chain = chain.then(async () => {
       try {
-        const res = await fetch(`/api/meetings/${o.meetingId}/transcribe?language=${encodeURIComponent(o.language)}`, {
+        const res = await fetch(`/api/meetings/${o.meetingId}/transcribe?language=${encodeURIComponent(o.language)}&model=${encodeURIComponent(o.model)}`, {
           method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'audio/wav' }, body: wav(samples),
         });
         const body = (await res.json().catch(() => null)) as (ClipAnswer & { detail?: string; error?: string }) | null;

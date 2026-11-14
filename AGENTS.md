@@ -432,8 +432,18 @@ duplicate review, knowledge base, basic CRM, manual interaction logging, pipelin
   `POST /api/meetings/{id}/transcribe`, a HOST route in `src/routes.ts` (module code may not call a model) that asks the kernel first
   (`sales/open-transcription`) and then a `Transcriber` (`src/transcribe.ts`): Whisper large-v3-turbo through `env.AI` on the worker, or Cloudflare's HTTP API
   with `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_AI_API_TOKEN` locally. Neither present: `GET /api/transcription/status` says why and recording is unaffected.
-  How a deployed vertical is given the `AI` binding is a platform matter not in the 0.195 docs; verify it before relying on the worker. Not Nova-3: its
-  docs do not list Swedish.
+  The deployed worker gets `env.AI` from the platform when `package.json` → `substrat.usesModels` is `true` (and the platform's fleet switch for models is on); a push
+  that does not declare it gets no binding. Not Nova-3: its docs do not list Swedish.
+- **Transcript versions** (`sales_transcript_runs`, `sales_transcript_speakers`, migration `0005`; `run_id` + `speaker` on the passages): every transcript is a
+  version with the model that made it. The live save (`sales/save-transcript`) records a `live` run; **Transcribe again** (`POST /api/meetings/{id}/transcribe-again`,
+  a HOST route) asks the kernel first (`sales/start-transcript-run`: the consent tick, at most 5 runs per recording with failed ones counting, one running at a time,
+  a run stuck 15 minutes is stale), reads the stored recording through the caller's attachments, calls the chosen model, and closes the run with
+  `sales/finish-transcript-run` or `sales/fail-transcript-run` (a plain sentence, never the provider's text). The first finished version for a recording is current; a person
+  switches it (`sales/set-current-transcript-run`). The default read of `sales/list-transcript` is each recording's current version plus any passage saved before versions
+  (empty `run_id`). Models are listed in `src/transcribe.ts` (`TRANSCRIPTION_MODELS`: Whisper large-v3-turbo, Grok STT via the gateway with `diarize`); the operations hold only
+  the keys (`TRANSCRIPTION_MODEL_KEYS`). A model whose `maxBytes` is below the recording is refused with the reason, not tried. Speaker numbers are 1, 2, 3… per version in order
+  of appearance and are named per version (`sales/rename-transcript-speaker`; `name` is `erasable`); events carry ids, model keys and counts, never words or names.
+  Live clips never ask for speakers (they would restart in every clip). Whisper's `maxBytes` (4 MiB) is cautious and unconfirmed; Grok's WebM acceptance is untested.
 - **Imports never merge silently.** A same-domain row matches; a same-name, different-domain row
   creates the record AND a duplicate candidate; a person decides (`sales/resolve-duplicate`). A
   merge re-points children and marks the loser `merged_into`; nothing is deleted. Raw uploaded

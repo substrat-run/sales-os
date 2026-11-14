@@ -168,7 +168,19 @@ export interface Recording {
 export interface TranscriptSegment {
   id: string; meeting_id: string; recording_id: string | null; seq: number; start_ms: number; end_ms: number; text: string;
   language: string | null; created_by: string; created_at: string; corrected_by: string | null; corrected_at: string | null;
+  run_id: string | null; speaker: number | null;
 }
+/** One version of a meeting's transcript: which model made it, from what, and whether it is the one shown. */
+export interface TranscriptRun {
+  id: string; meeting_id: string; recording_id: string | null; model: string; language: string | null; diarize: number;
+  source: string; status: string; is_current: number; segment_count: number; failure: string | null;
+  created_by: string; created_at: string; finished_at: string | null;
+}
+export interface TranscriptSpeaker { id: string; run_id: string; number: number; name: string; updated_by: string; updated_at: string }
+export interface TranscriptionModel {
+  key: string; label: string; description: string; processors: string[]; live: boolean; speakers: boolean; usdPerMinute: number; maxBytes: number;
+}
+export interface TranscriptionStatus { available: boolean; reason?: string; models: TranscriptionModel[] }
 export interface RecordingLink { url: string; expiresAt: string; maxBytes: number }
 export interface Task {
   id: string; company_id: string | null; opportunity_id: string | null; title: string; due_date: string;

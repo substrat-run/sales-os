@@ -9,7 +9,7 @@ import type { SqliteScopeHost } from '@substrat-run/adapter-sqlite';
 import { buildSalesHost, seedSales, type SalesWorld } from '../src/seed.js';
 import type { CompanyRow, MeetingRow, TranscriptSegmentRow } from '../src/module.js';
 import { CLIP_MAX_BYTES, mountApi } from '../src/routes.js';
-import { bindingTranscriber, httpTranscriber, resolveBindingTranscriber, resolveLocalTranscriber, type Transcriber } from '../src/transcribe.js';
+import { bindingTranscriber, httpTranscriber, resolveBindingTranscriber, resolveLocalTranscriber, type Transcribe } from '../src/transcribe.js';
 
 // ============================================================================
 // Transcripts. What is ours: who may save, read and correct one, that the words stay out of every event, that the clip
@@ -29,12 +29,12 @@ describe('transcripts', () => {
   const WORDS = 'Vi behöver ett nytt bokningssystem';
 
   const asked: { bytes: number; language?: string | undefined }[] = [];
-  const scripted: Transcriber = async (audio, language) => {
-    asked.push({ bytes: audio.length, language });
+  const scripted: Transcribe = async (_model, audio, options) => {
+    asked.push({ bytes: audio.length, language: options?.language });
     return { text: WORDS, segments: [{ start: 0, end: 3.2, text: WORDS }], language: 'sv' };
   };
   let who: 'markus' | 'nora' | 'rex' = 'nora';
-  let model: { transcribe: Transcriber } | { reason: string } = { transcribe: scripted };
+  let model: { transcribe: Transcribe } | { reason: string } = { transcribe: scripted };
   const app = new Hono();
 
   beforeAll(async () => {
@@ -147,16 +147,16 @@ describe('transcripts', () => {
   it('9. the binding and the HTTP way read the same answer, and neither repeats a failure’s text', async () => {
     const answer = { text: 'hej', transcription_info: { language: 'sv' }, segments: [{ start: 0, end: 1, text: ' hej ' }] };
     const calls: unknown[] = [];
-    const viaBinding = await bindingTranscriber({ run: async (m, i) => { calls.push([m, Object.keys(i)]); return answer; } })(new Uint8Array([1, 2, 3]), 'sv');
-    const viaHttp = await httpTranscriber('acct', 'tok', (async () => new Response(JSON.stringify({ result: answer }))) as typeof fetch)(new Uint8Array([1, 2, 3]), 'sv');
+    const viaBinding = await bindingTranscriber({ run: async (m, i) => { calls.push([m, Object.keys(i)]); return answer; } })('whisper', new Uint8Array([1, 2, 3]), { language: 'sv' });
+    const viaHttp = await httpTranscriber('acct', 'tok', (async () => new Response(JSON.stringify({ result: answer }))) as typeof fetch)('whisper', new Uint8Array([1, 2, 3]), { language: 'sv' });
     expect(viaBinding).toEqual({ text: 'hej', segments: [{ start: 0, end: 1, text: 'hej' }], language: 'sv' });
     expect(viaHttp).toEqual(viaBinding);
     expect(calls[0]).toEqual(['@cf/openai/whisper-large-v3-turbo', expect.arrayContaining(['audio', 'language'])]);
     await expect(
-      httpTranscriber('acct', 'tok', (async () => new Response('token tok is invalid', { status: 401 })) as typeof fetch)(new Uint8Array([1])),
+      httpTranscriber('acct', 'tok', (async () => new Response('token tok is invalid', { status: 401 })) as typeof fetch)('whisper', new Uint8Array([1])),
     ).rejects.toThrow(/^transcription failed \(401\)$/);
     // No text and no segments is an empty clip, not an error.
-    expect(await bindingTranscriber({ run: async () => ({}) })(new Uint8Array([1]))).toEqual({ text: '', segments: [], language: null });
+    expect(await bindingTranscriber({ run: async () => ({}) })('whisper', new Uint8Array([1]))).toEqual({ text: '', segments: [], language: null });
   });
 
   it('10. each host says what it lacks', () => {

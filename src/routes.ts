@@ -1,9 +1,10 @@
 import type { Context, Hono } from 'hono';
-import { substratError } from '@substrat-run/contracts';
+import { substratError, z } from '@substrat-run/contracts';
 import type { ScopeAttachments, ScopeStub } from '@substrat-run/kernel';
 import { externalInput, externalJson, mountOperations, problemResponse, type ResolveStub } from '@substrat-run/vertical-host';
 import { assistantRoutes, salesOperations } from './operations.js';
-import type { TranscriberChoice } from './transcribe.js';
+import { TRANSCRIPTION_MODEL_KEYS } from './entities.js';
+import { TRANSCRIPTION_MODELS, estimatedMinutes, modelInfo, type TranscriberChoice } from './transcribe.js';
 
 /**
  * The Sales OS HTTP API — derived from the declared operations, adapter- and
@@ -152,11 +153,24 @@ export function mountApi(
     return c.body(null, 204);
   });
 
-  // Whether this host can turn speech into text, so the recorder offers a transcript only where one can be made.
+  // Whether this host can turn speech into text, and which models it offers, so the recorder and the "transcribe again" panel
+  // offer only what can run. Each model says what it can do, who handles the audio and what it costs.
+  const transcriptionStatus = (c: Context) => {
+    const choice = transcriber?.(c);
+    const available = Boolean(choice && 'transcribe' in choice);
+    return {
+      available,
+      ...(available ? {} : { reason: choice && 'reason' in choice ? choice.reason : 'Transcription is not available on this host yet.' }),
+      models: TRANSCRIPTION_MODELS.map((m) => ({ ...m })),
+    };
+  };
   app.get('/api/transcription/status', async (c) => {
     await resolveStub(c);
-    const choice = transcriber?.(c);
-    return c.json(choice && 'transcribe' in choice ? { available: true } : { available: false, reason: choice && 'reason' in choice ? choice.reason : 'Transcription is not available on this host yet.' });
+    return c.json(transcriptionStatus(c));
+  });
+  app.get('/api/transcription/models', async (c) => {
+    await resolveStub(c);
+    return c.json(transcriptionStatus(c));
   });
 
   // One clip of speech in, text out. It holds no data: the audio is passed to the model and dropped. The kernel decides
@@ -168,6 +182,9 @@ export function mountApi(
     if (!choice || !('transcribe' in choice)) {
       throw substratError('unavailable', choice && 'reason' in choice ? choice.reason : 'Transcription is not available on this host yet.');
     }
+    const asked = c.req.query('model') ?? 'whisper';
+    const info = modelInfo(asked);
+    if (!info || !info.live) throw substratError('validation_failed', 'that model cannot transcribe while recording');
     const declared = Number(c.req.header('content-length') ?? 0);
     if (declared > CLIP_MAX_BYTES) throw substratError('validation_failed', 'that clip is too large');
     const audio = new Uint8Array(await c.req.arrayBuffer());
@@ -175,9 +192,74 @@ export function mountApi(
     if (audio.length > CLIP_MAX_BYTES) throw substratError('validation_failed', 'that clip is too large');
     const language = c.req.query('language');
     try {
-      return c.json(await choice.transcribe(audio, language === 'sv' || language === 'en' ? language : undefined));
+      // Speaker numbers would restart in every ten-second clip, so a live clip never asks for them: that is what a later run is for.
+      return c.json(await choice.transcribe(info.key, audio, { language: language === 'sv' || language === 'en' ? language : undefined, mime: c.req.header('content-type') ?? undefined }));
     } catch {
       throw substratError('unavailable', 'The transcription service did not answer. Try again.');
+    }
+  });
+
+  // A stored recording, transcribed again with a model the person picks. The kernel is asked first (the consent tick, the limit on
+  // runs, the permission), the model runs here (module code may not call one), and what it returns is saved as a NEW version.
+  const againBody = z.object({
+    recordingId: z.string().min(1),
+    model: z.enum(TRANSCRIPTION_MODEL_KEYS),
+    language: z.enum(['sv', 'en']).optional(),
+    diarize: z.boolean().optional(),
+    consent: z.boolean(),
+  });
+  app.post('/api/meetings/:meetingId/transcribe-again', async (c) => {
+    const person = await resolveStub(c);
+    const parsed = againBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) throw substratError('validation_failed', 'choose a recording and a model');
+    const body = parsed.data;
+    const info = modelInfo(body.model)!;
+    const choice = transcriber?.(c);
+    if (!choice || !('transcribe' in choice)) {
+      throw substratError('unavailable', choice && 'reason' in choice ? choice.reason : 'Transcription is not available on this host yet.');
+    }
+    const meetingId = c.req.param('meetingId');
+    const recordings = await (await files(c)).list({ entityType: 'meeting', entityId: meetingId });
+    const recording = recordings.find((r) => r.id === body.recordingId);
+    if (!recording) throw substratError('not_found', 'recording not found');
+    if (body.diarize && !info.speakers) throw substratError('validation_failed', `${info.label} does not label who is speaking`);
+    // A model that cannot be given this file is not tried: the person is told why and can pick another.
+    if (recording.size > info.maxBytes) {
+      throw substratError(
+        'validation_failed',
+        `${info.label} takes recordings up to about ${estimatedMinutes(info.maxBytes)} minutes, and this one is about ${estimatedMinutes(recording.size)}. Pick another model.`,
+      );
+    }
+    const run = await person.invoke<{ id: string }>('sales/start-transcript-run', {
+      meetingId,
+      recordingId: recording.id,
+      model: body.model,
+      ...(body.language ? { language: body.language } : {}),
+      ...(body.diarize ? { diarize: true } : {}),
+      consent: body.consent,
+    });
+    let reason = 'The transcription service did not answer. Try again.';
+    try {
+      const opened = await (await files(c)).open(recording.id);
+      if (!opened) throw new Error('the recording could not be read');
+      const clip = await choice.transcribe(body.model, opened.body, { language: body.language, diarize: body.diarize, mime: opened.contentType });
+      const segments = clip.segments
+        .filter((s) => s.text.trim())
+        .map((s) => ({
+          startMs: Math.round(s.start * 1000),
+          endMs: Math.round(s.end * 1000),
+          text: s.text.trim().slice(0, 4000),
+          ...(s.speaker ? { speaker: s.speaker } : {}),
+        }));
+      if (!segments.length) {
+        reason = 'No speech was found in this recording.';
+        throw new Error('no speech');
+      }
+      return c.json(await person.invoke('sales/finish-transcript-run', { runId: run.id, ...(clip.language ? { language: clip.language } : {}), segments }));
+    } catch {
+      // The earlier transcript stays as it was. The provider's own words are never repeated; the run is closed with a plain sentence.
+      await person.invoke('sales/fail-transcript-run', { runId: run.id, reason }).catch(() => undefined);
+      throw substratError('unavailable', reason);
     }
   });
 

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError, get, getAll, getWithEtag, post, qs, uploadAudio, useLoad,
-  type Company, type Meeting, type Opportunity, type Recording, type RecordingLink, type TranscriptSegment,
+  type Company, type Meeting, type Opportunity, type Recording, type RecordingLink, type TranscriptRun, type TranscriptSegment,
+  type TranscriptSpeaker, type TranscriptionModel, type TranscriptionStatus,
 } from '../api';
 import { startLive, type Passage } from '../live';
 import { Badge, CompanyLink, ErrorBox, Field, Loading, Section, Who, fmtLocal, useAction } from '../ui';
@@ -209,15 +210,66 @@ function RecordingsAndTranscript({ meeting }: { meeting: Meeting }) {
 
 const fmtOffset = (ms: number) => fmtClock(Math.floor(ms / 1000));
 
+const usd = (n: number) => (n < 0.005 ? 'under 1 cent' : `about $${n.toFixed(2)}`);
+const minutesOf = (bytes: number) => Math.max(1, Math.round(bytes / 4000 / 60));
+const processorsText = (m: TranscriptionModel | undefined) => (m ? m.processors.join(' and ') : 'a cloud service');
+const runName = (r: TranscriptRun, models?: TranscriptionModel[]) =>
+  `${models?.find((m) => m.key === r.model)?.label ?? r.model} · ${r.source === 'live' ? 'live' : 'again'} · ${fmtLocal(r.created_at)}${r.is_current ? ' (shown)' : ''}`;
+
+/** The versions of a transcript, the passages of the one picked, who is speaking, and a way to make another version. */
 function Transcript({ meetingId, version }: { meetingId: string; version: number }) {
-  const q = useLoad(() => getAll<TranscriptSegment>(`/meetings/${meetingId}/transcript`, 4), [meetingId, version]);
+  const [tick, setTick] = useState(0);
+  const [picked, setPicked] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [text, setText] = useState('');
-  const act = useAction(() => { setEditing(null); q.reload(); });
-  if (!q.data) return <Loading state={q} />;
+  const [renaming, setRenaming] = useState<number | null>(null);
+  const [name, setName] = useState('');
+  const reload = () => setTick((t) => t + 1);
+  const runs = useLoad(() => getAll<TranscriptRun>(`/meetings/${meetingId}/transcript-runs`, 2), [meetingId, version, tick]);
+  const status = useLoad(() => get<TranscriptionStatus>('/transcription/models').catch(() => null), []);
+  const recordings = useLoad(async () => { try { return await get<Recording[]>(`/meetings/${meetingId}/recordings`); } catch { return [] as Recording[]; } }, [meetingId, version]);
+  const done = (runs.data ?? []).filter((r) => r.status === 'done');
+  const failed = (runs.data ?? []).filter((r) => r.status === 'failed');
+  const shown = picked && done.some((r) => r.id === picked) ? picked : done.find((r) => r.is_current)?.id ?? null;
+  const shownRun = done.find((r) => r.id === shown);
+  const q = useLoad(() => getAll<TranscriptSegment>(`/meetings/${meetingId}/transcript${shown ? qs({ runId: shown }) : ''}`, 4), [meetingId, version, tick, shown]);
+  const speakers = useLoad(() => (shown ? getAll<TranscriptSpeaker>(`/transcript-runs/${shown}/speakers`, 1) : Promise.resolve([] as TranscriptSpeaker[])), [shown, tick]);
+  const act = useAction(() => { setEditing(null); setRenaming(null); reload(); });
+  if (!q.data || !runs.data) return <Loading state={q.data ? runs : q} />;
+  const names = new Map((speakers.data ?? []).map((s) => [s.number, s.name]));
+  const label = (n: number) => names.get(n) ?? `Speaker ${n}`;
   const rows = q.data.slice().sort((a, b) => (a.recording_id ?? '').localeCompare(b.recording_id ?? '') || a.seq - b.seq);
+  const speakerNumbers = [...new Set(rows.map((r) => r.speaker).filter((n): n is number => n !== null))].sort((a, b) => a - b);
+  const models = status.data?.models;
   return (
     <Section title={`Transcript (${rows.length})`}>
+      {done.length > 1 && (
+        <div className="inline">
+          <label>Version{' '}
+            <select value={shown ?? ''} onChange={(e) => setPicked(e.target.value)}>
+              {done.map((r) => <option key={r.id} value={r.id}>{runName(r, models)}</option>)}
+            </select>
+          </label>
+          {shownRun && !shownRun.is_current && (
+            <button disabled={act.busy} onClick={() => void act.run(() => post(`/transcript-runs/${shownRun.id}/current`, { runId: shownRun.id }))}>Show this version by default</button>
+          )}
+        </div>
+      )}
+      {speakerNumbers.length > 0 && shown && (
+        <p className="speakers">
+          {speakerNumbers.map((n) => (
+            renaming === n ? (
+              <form key={n} className="inline" onSubmit={(e) => { e.preventDefault(); void act.run(() => post(`/transcript-runs/${shown}/speakers`, { runId: shown, number: n, name: name.trim() })); }}>
+                <input value={name} maxLength={80} autoFocus onChange={(e) => setName(e.target.value)} aria-label={`Name for speaker ${n}`} />
+                <button disabled={act.busy || !name.trim()}>Save</button>
+                <button type="button" onClick={() => setRenaming(null)}>Cancel</button>
+              </form>
+            ) : (
+              <button key={n} className="chip" title="Rename this speaker in this version" onClick={() => { setRenaming(n); setName(names.get(n) ?? ''); }}>{label(n)} ✎</button>
+            )
+          ))}
+        </p>
+      )}
       {rows.length ? (
         <ul className="rows transcript">
           {rows.map((r) => (
@@ -230,16 +282,97 @@ function Transcript({ meetingId, version }: { meetingId: string; version: number
                 </form>
               ) : (
                 <>
-                  <span className="grow">{r.text}{r.corrected_at ? <> <Badge>corrected</Badge></> : null}</span>
+                  <span className="grow">{r.speaker !== null && <strong>{label(r.speaker)}: </strong>}{r.text}{r.corrected_at ? <> <Badge>corrected</Badge></> : null}</span>
                   <button onClick={() => { setEditing(r.id); setText(r.text); }}>Edit</button>
                 </>
               )}
             </li>
           ))}
         </ul>
-      ) : <p className="muted">No transcript. Tick “transcribe” when recording to make one.</p>}
+      ) : <p className="muted">No transcript. Tick “transcribe” when recording, or transcribe a recording below.</p>}
+      {failed.length > 0 && (
+        <ul className="muted notes-list">
+          {failed.map((r) => <li key={r.id}>{models?.find((m) => m.key === r.model)?.label ?? r.model} did not finish ({fmtLocal(r.created_at)}): {r.failure ?? 'it failed'}</li>)}
+        </ul>
+      )}
       <ErrorBox error={act.error} />
+      {status.data && recordings.data && recordings.data.length > 0 && (
+        <TranscribeAgain
+          meetingId={meetingId}
+          status={status.data}
+          recordings={recordings.data}
+          used={(runs.data ?? []).length}
+          onDone={(id) => { setPicked(id); reload(); }}
+          onReload={reload}
+        />
+      )}
     </Section>
+  );
+}
+
+const MAX_RUNS = 5;
+
+/** Transcribe a stored recording again with a model the person picks. The price and who handles the audio are shown first. */
+function TranscribeAgain({ meetingId, status, recordings, used, onDone, onReload }: { meetingId: string; status: TranscriptionStatus; recordings: Recording[]; used: number; onDone: (runId: string) => void; onReload: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [recordingId, setRecordingId] = useState(recordings[0]!.id);
+  const [modelKey, setModelKey] = useState(status.models[0]!.key);
+  const [language, setLanguage] = useState('sv');
+  const [diarize, setDiarize] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const act = useAction();
+  const model = status.models.find((m) => m.key === modelKey)!;
+  const recording = recordings.find((r) => r.id === recordingId) ?? recordings[0]!;
+  const tooLong = recording.size > model.maxBytes;
+  const minutes = minutesOf(recording.size);
+  if (!open) {
+    return <div className="actions"><button onClick={() => setOpen(true)} disabled={!status.available}>Transcribe again…</button>{!status.available && <span className="muted"> {status.reason}</span>}</div>;
+  }
+  const run = () => act.run(async () => {
+    let created: TranscriptRun;
+    try {
+      created = await post<TranscriptRun>(`/meetings/${meetingId}/transcribe-again`, { recordingId, model: modelKey, language, ...(diarize && model.speakers ? { diarize: true } : {}), consent });
+    } catch (e) {
+      // A run that failed is still a run: it counts toward the limit and is listed, so the page reads it again.
+      onReload();
+      throw e;
+    }
+    setOpen(false);
+    setConsent(false);
+    onDone(created.id);
+  });
+  return (
+    <form className="form again" onSubmit={(e) => { e.preventDefault(); void run(); }}>
+      <h3>Transcribe again</h3>
+      {recordings.length > 1 && (
+        <Field label="Recording">
+          <select value={recordingId} onChange={(e) => setRecordingId(e.target.value)}>
+            {recordings.map((r) => <option key={r.id} value={r.id}>{fmtLocal(r.createdAt)} · about {minutesOf(r.size)} min</option>)}
+          </select>
+        </Field>
+      )}
+      <Field label="Model">
+        <select value={modelKey} onChange={(e) => { setModelKey(e.target.value); setDiarize(false); }}>
+          {status.models.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+        </select>
+      </Field>
+      <p className="muted">{model.description} Audio is handled by {processorsText(model)}.</p>
+      <Field label="Language">
+        <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+          <option value="sv">Swedish</option>
+          <option value="en">English</option>
+        </select>
+      </Field>
+      {model.speakers && <label className="check"><input type="checkbox" checked={diarize} onChange={(e) => setDiarize(e.target.checked)} /> Label who is speaking</label>}
+      <p className="muted">About {minutes} min of audio · {usd(minutes * model.usdPerMinute)} · {used} of {MAX_RUNS} transcripts used for this meeting’s recordings</p>
+      {tooLong && <p className="note">{model.label} takes recordings up to about {minutesOf(model.maxBytes)} minutes; this one is about {minutes}. Pick another model.</p>}
+      <label className="check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> Everyone on this recording has agreed to it being transcribed by {processorsText(model)}</label>
+      <div className="actions">
+        <button className="primary" disabled={act.busy || !consent || tooLong}>{act.busy ? 'Transcribing… this can take a minute' : 'Transcribe'}</button>
+        <button type="button" disabled={act.busy} onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+      <ErrorBox error={act.error} />
+    </form>
   );
 }
 
@@ -291,11 +424,14 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
   const [error, setError] = useState<Error | null>(null);
   const [language, setLanguage] = useState('sv');
   const [transcribe, setTranscribe] = useState(true);
+  const [model, setModel] = useState('whisper');
   const [passages, setPassages] = useState<Passage[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const rec = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[]; bytes: number; link: RecordingLink; live: { stop: () => Promise<Passage[]> } | null } | null>(null);
   // Whether this host can make a transcript, so it is offered only where one can be made.
-  const status = useLoad(() => get<{ available: boolean; reason?: string }>('/transcription/status').catch(() => ({ available: false })), []);
+  const status = useLoad(() => get<TranscriptionStatus>('/transcription/status').catch(() => ({ available: false, models: [] as TranscriptionModel[] }) as TranscriptionStatus), []);
+  const liveModels = (status.data?.models ?? []).filter((m) => m.live);
+  const chosen = liveModels.find((m) => m.key === model) ?? liveModels[0];
   const canTranscribe = !!status.data?.available;
   const wantTranscript = canTranscribe && transcribe;
   const supported = typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
@@ -327,7 +463,7 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
       setNotice(null);
       if (wantTranscript) {
         try {
-          live = await startLive(stream, { meetingId, language, onPassages: setPassages, onError: (e) => setNotice(`Part of the transcript is missing: ${e.message}`) });
+          live = await startLive(stream, { meetingId, language, model: chosen?.key ?? 'whisper', onPassages: setPassages, onError: (e) => setNotice(`Part of the transcript is missing: ${e.message}`) });
         } catch {
           setNotice('Live text could not start in this browser. The meeting is still being recorded.');
         }
@@ -366,7 +502,7 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
       // The transcript is kept even if the audio could not be (it is still what was said).
       const spoken = (await state.live?.stop()) ?? [];
       if (spoken.length) {
-        await post(`/meetings/${meetingId}/transcript`, { meetingId, ...(recordingId && { recordingId }), language, segments: spoken });
+        await post(`/meetings/${meetingId}/transcript`, { meetingId, ...(recordingId && { recordingId }), language, model: chosen?.key ?? 'whisper', segments: spoken });
       }
       onSaved();
     } catch (e) {
@@ -390,12 +526,16 @@ function Recorder({ meetingId, onSaved }: { meetingId: string; onSaved: () => vo
                 <option value="sv">Swedish</option>
                 <option value="en">English</option>
               </select>
+              <select aria-label="Model" value={chosen?.key ?? ''} disabled={!transcribe} onChange={(e) => setModel(e.target.value)}>
+                {liveModels.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
             </div>
           )}
+          {canTranscribe && transcribe && chosen && <p className="muted ask-note">{chosen.description} Speaker labels come from “Transcribe again” after the recording.</p>}
           <label className="check">
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
             {wantTranscript
-              ? 'Everyone on this call has agreed to be recorded and transcribed by a cloud service'
+              ? `Everyone on this call has agreed to be recorded and transcribed by ${processorsText(chosen)}`
               : 'Everyone on this call has agreed to be recorded'}
           </label>
           {status.data && !canTranscribe && (

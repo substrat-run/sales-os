@@ -16,6 +16,13 @@ import { defineEntities, z } from '@substrat-run/contracts';
 // place in a scope an erasure cannot reach.
 // ============================================================================
 
+/** The speech models a transcript can be made with. What each can do lives in `src/transcribe.ts`; the operations hold only the keys. */
+export const TRANSCRIPTION_MODEL_KEYS = ['whisper', 'grok-stt'] as const;
+export type TranscriptionModelKey = (typeof TRANSCRIPTION_MODEL_KEYS)[number];
+export const TRANSCRIPT_RUN_STATUSES = ['running', 'done', 'failed'] as const;
+/** At most this many runs (failed ones count) for one recording: a bound on cost, not a permission. */
+export const MAX_RUNS_PER_RECORDING = 5;
+
 export const STAGES = ['new', 'contacted', 'in_conversation', 'meeting_held', 'proposal', 'won', 'lost'] as const;
 export const CLAIM_LABELS = ['shipped', 'built_unproven', 'bet'] as const;
 export const KNOWLEDGE_CATEGORIES = [
@@ -127,10 +134,47 @@ export const salesEntities = defineEntities({
       created_at: z.string(),
       corrected_by: z.string().nullable(),
       corrected_at: z.string().nullable(),
+      // The version this passage belongs to (empty for a passage saved before versions), and who was speaking when the model said.
+      run_id: z.string().nullable(),
+      speaker: z.number().nullable(),
     }),
     key: ['id'],
     // What was said is customer speech, and names people.
     erasable: ['text'],
+  },
+  transcript_run: {
+    table: 'sales_transcript_runs',
+    fields: z.object({
+      id: z.string(),
+      meeting_id: z.string(),
+      recording_id: z.string().nullable(),
+      model: z.string(),
+      language: z.string().nullable(),
+      diarize: z.number(),
+      source: z.string(),
+      status: z.string(),
+      is_current: z.number(),
+      segment_count: z.number(),
+      failure: z.string().nullable(),
+      created_by: z.string(),
+      created_at: z.string(),
+      finished_at: z.string().nullable(),
+    }),
+    key: ['id'],
+  },
+  transcript_speaker: {
+    table: 'sales_transcript_speakers',
+    fields: z.object({
+      id: z.string(),
+      run_id: z.string(),
+      number: z.number(),
+      name: z.string(),
+      updated_by: z.string(),
+      updated_at: z.string(),
+    }),
+    key: ['id'],
+    // A name a person typed for a voice on a recording.
+    erasable: ['name'],
   },
   interaction: {
     table: 'sales_interactions',

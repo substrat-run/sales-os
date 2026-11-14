@@ -211,4 +211,37 @@ export const salesMigrations: SqlMigration[] = [
       CREATE INDEX sales_transcript_meeting ON sales_transcript_segments(meeting_id, seq);
     `,
   },
+  {
+    version: '0005-transcript-runs',
+    sql: `
+      CREATE TABLE sales_transcript_runs (
+        id            TEXT PRIMARY KEY,
+        meeting_id    TEXT NOT NULL REFERENCES sales_meetings(id),
+        recording_id  TEXT,
+        model         TEXT NOT NULL,
+        language      TEXT,
+        diarize       INTEGER NOT NULL DEFAULT 0,
+        source        TEXT NOT NULL,
+        status        TEXT NOT NULL,
+        is_current    INTEGER NOT NULL DEFAULT 0,
+        segment_count INTEGER NOT NULL DEFAULT 0,
+        failure       TEXT,
+        created_by    TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        finished_at   TEXT
+      );
+      CREATE INDEX sales_transcript_runs_meeting ON sales_transcript_runs(meeting_id);
+      CREATE TABLE sales_transcript_speakers (
+        id         TEXT PRIMARY KEY,
+        run_id     TEXT NOT NULL REFERENCES sales_transcript_runs(id),
+        number     INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX sales_transcript_speakers_run ON sales_transcript_speakers(run_id, number);
+      ALTER TABLE sales_transcript_segments ADD COLUMN run_id TEXT;
+      ALTER TABLE sales_transcript_segments ADD COLUMN speaker INTEGER;
+    `,
+  },
 ];
